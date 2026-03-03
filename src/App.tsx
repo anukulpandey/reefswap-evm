@@ -714,17 +714,47 @@ const App = () => {
 
   const activityRows = useMemo(() => {
     const rows = [
-      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:49 PM', amount: '-342.00' },
-      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:47 PM', amount: '-43.00' },
-      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:45 PM', amount: '-1.00' },
+      {
+        id: 'sent-1',
+        title: 'Sent REEF',
+        time: 'Mar 2, 2026 · 10:49 PM',
+        amount: '-342.00',
+        direction: 'up' as const,
+        positive: false,
+        href: reefChain.blockExplorers.default.url,
+      },
+      {
+        id: 'recv-1',
+        title: 'Received PRLS',
+        time: 'Mar 2, 2026 · 10:47 PM',
+        amount: '+9.2449',
+        direction: 'down' as const,
+        positive: true,
+        href: reefChain.blockExplorers.default.url,
+      },
+      {
+        id: 'sent-2',
+        title: 'Sent REEF',
+        time: 'Mar 2, 2026 · 10:45 PM',
+        amount: '-1.00',
+        direction: 'up' as const,
+        positive: false,
+        href: reefChain.blockExplorers.default.url,
+      },
     ];
+
     if (lastTxHash) {
       rows.unshift({
+        id: lastTxHash,
         title: 'Latest Tx',
-        time: `Hash ${shortAddress(lastTxHash)}`,
-        amount: '-',
+        time: `${shortAddress(lastTxHash)} · just now`,
+        amount: 'View',
+        direction: 'up' as const,
+        positive: false,
+        href: `${reefChain.blockExplorers.default.url}/tx/${lastTxHash}`,
       });
     }
+
     return rows;
   }, [lastTxHash]);
 
@@ -782,30 +812,30 @@ const App = () => {
     <section className="panel-card activity-card">
       <div className="activity-head">
         <h3>Activity</h3>
-        <a href={reefChain.blockExplorers.default.url} target="_blank" rel="noreferrer">
+        <a className="activity-open-link" href={reefChain.blockExplorers.default.url} target="_blank" rel="noreferrer">
+          <span className="activity-open-link__icon">↗</span>
           Open Explorer
         </a>
       </div>
-      <div className="activity-list">
-        {activityRows.map((row) => (
-          <a
-            key={`${row.title}-${row.time}`}
-            className="activity-item"
-            href={lastTxHash ? `${reefChain.blockExplorers.default.url}/tx/${lastTxHash}` : reefChain.blockExplorers.default.url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <div className="activity-item__icon">↗</div>
-            <div className="activity-item__meta">
-              <strong>{row.title}</strong>
-              <span>{row.time}</span>
+      <div className="activity-list-shell">
+        <div className="activity-list">
+          {activityRows.map((row, index) => (
+            <div key={row.id}>
+              <a className="activity-item" href={row.href} target="_blank" rel="noreferrer">
+                <div className="activity-item__icon">{row.direction === 'up' ? '↗' : '↙'}</div>
+                <div className="activity-item__meta">
+                  <strong>{row.title}</strong>
+                  <span>{row.time}</span>
+                </div>
+                <div className={`activity-item__amount ${row.positive ? 'positive' : ''}`}>
+                  {row.amount}
+                  <Uik.ReefIcon className="activity-item__amount-icon" />
+                </div>
+              </a>
+              {index < activityRows.length - 1 ? <div className="activity-divider" /> : null}
             </div>
-            <div className="activity-item__amount">
-              {row.amount}
-              <Uik.ReefIcon className="activity-item__amount-icon" />
-            </div>
-          </a>
-        ))}
+          ))}
+        </div>
       </div>
     </section>
   );
