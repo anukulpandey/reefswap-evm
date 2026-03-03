@@ -32,7 +32,7 @@ const AppHeader = ({ activeRoute, onNavigate }: AppHeaderProps) => {
   const isCompactHeader = activeRoute === 'pool-detail';
   const highlightedRoute = activeRoute === 'pool-detail' ? 'pools' : activeRoute;
   const navRoutes = isCompactHeader
-    ? NAV_ROUTES.filter((item) => item.route === 'tokens' || item.route === 'pools' || item.route === 'create-token')
+    ? NAV_ROUTES.filter((item) => item.route === 'tokens' || item.route === 'swap' || item.route === 'pools' || item.route === 'create-token')
     : NAV_ROUTES;
 
   const formattedBalance = new Intl.NumberFormat('en-US', {

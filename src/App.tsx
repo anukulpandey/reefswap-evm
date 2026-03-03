@@ -8,6 +8,7 @@ import {
   useSwitchChain,
   useWalletClient,
 } from 'wagmi';
+import { Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import { erc20Abi, reefswapFactoryAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
@@ -1018,6 +1019,24 @@ const App = () => {
   const creatorRouteView = <CreatorPage />;
 
   const REEF_WREEF_POOL = '0x3D37D5452BDeA164666291890D2830A82be141E1';
+  const myPools = [
+    {
+      id: 'reef-fleeper',
+      pair: 'Reef - Fleeper',
+      myLiquidity: '$ 96.71',
+      tvl: '$ 0.50',
+      volume24h: '$ 0',
+      volume24hPct: '0.00%',
+    },
+    {
+      id: 'reef-diver',
+      pair: 'Reef - Diver',
+      myLiquidity: '$ 0.56',
+      tvl: '$ 0.20',
+      volume24h: '$ 0',
+      volume24hPct: '0.00%',
+    },
+  ];
 
   const poolsRouteView = (
     <div className="max-w-7xl mx-auto px-6 py-8">
@@ -1139,6 +1158,97 @@ const App = () => {
           </div>
         </div>
       </div>
+
+      <section className="mt-7 rounded-[28px] border border-[#e4deef] bg-white/45 px-5 py-4 md:px-6 md:py-5">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-[2rem] font-semibold leading-none text-[#1f2743]">My Pools</h2>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-[18px] border border-[#eadff2] bg-[#f1eaf8] px-5 py-2.5 text-[1.05rem] font-semibold text-[#b13a8e]"
+          >
+            <Search className="h-5 w-5" />
+            Search
+          </button>
+        </div>
+
+        <div className="mt-5">
+          <div className="grid grid-cols-[minmax(260px,1.6fr)_minmax(140px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.9fr)_minmax(120px,0.9fr)_minmax(300px,1.2fr)] items-center gap-x-4 px-5 pb-3 text-[0.9rem] font-semibold text-[#202946]">
+            <span>Pair</span>
+            <span className="text-center">My Liquidity</span>
+            <span className="text-center">TVL</span>
+            <span className="text-center">24h Vol.</span>
+            <span className="text-center">24h Vol. %</span>
+            <span />
+          </div>
+
+          <div className="space-y-2">
+            {myPools.map((pool) => (
+              <div
+                key={pool.id}
+                className="grid grid-cols-[minmax(260px,1.6fr)_minmax(140px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.9fr)_minmax(120px,0.9fr)_minmax(300px,1.2fr)] items-center gap-x-4 rounded-[22px] bg-[#ece9f4] px-5 py-4"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="relative h-10 w-[3.4rem] flex-shrink-0">
+                    <span className="absolute left-0 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
+                      <Uik.ReefIcon className="h-5 w-5" />
+                    </span>
+                    <span className="absolute left-5 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-base font-bold text-[#574a75] shadow-sm">
+                      R
+                    </span>
+                  </div>
+                  <span className="text-[1rem] font-semibold text-[#1f2743]">{pool.pair}</span>
+                </div>
+
+                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.myLiquidity}</span>
+                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.tvl}</span>
+                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.volume24h}</span>
+                <span className="text-center text-[1rem] font-semibold text-[#2fad73]">▲ {pool.volume24hPct}</span>
+
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-4 py-2 text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-110"
+                  >
+                    <Upload className="h-4 w-4" />
+                    Unstake
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-r from-[#a93185] to-[#6b33b4] px-4 py-2 text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-110"
+                  >
+                    <Coins className="h-4 w-4" />
+                    Stake
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 flex justify-center">
+            <div className="inline-flex items-center gap-1 rounded-[18px] bg-[#e2dcea] p-2">
+              <button
+                type="button"
+                className="h-11 min-w-11 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#7a32b4] px-4 text-[1rem] font-semibold text-white"
+              >
+                1
+              </button>
+              <button
+                type="button"
+                className="h-11 min-w-11 rounded-[12px] px-4 text-[1rem] font-semibold text-[#202946]"
+              >
+                2
+              </button>
+              <button
+                type="button"
+                aria-label="Next page"
+                className="h-11 min-w-11 rounded-[12px] px-4 text-[1.25rem] font-medium text-[#8f86a5]"
+              >
+                ›
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 
