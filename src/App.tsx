@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
-import { ArrowDownLeft, ArrowUpRight, ChevronDown, ExternalLink, Eye, EyeOff } from 'lucide-react';
-import { FaPaperPlane } from 'react-icons/fa';
 import {
   useAccount,
   useConnect,
@@ -14,9 +12,16 @@ import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'vi
 import { erc20Abi, reefswapFactoryAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
-import BuyReefButton from './components/BuyReefButton';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from './lib/utils';
+import AppHeader from './components/reef/AppHeader';
+import PortfolioSummary from './components/reef/PortfolioSummary';
+import AssetTabs from './components/reef/AssetTabs';
+import ActivityPanel from './components/reef/ActivityPanel';
+import CreatorPage from './components/reef/creator/CreatorPage';
+import ChartView from './components/reef/ChartView';
+import { useReefBalance } from './hooks/useReefBalance';
+import { useReefPrice } from './hooks/useReefPrice';
 
 const MAX_APPROVAL = (2n ** 256n) - 1n;
 const DEFAULT_SLIPPAGE = '1.0';
@@ -36,7 +41,7 @@ const SLIPPAGE_SLIDER_HELPERS = [
   { position: 100, text: '20%' },
 ];
 
-type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token';
+type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token' | 'chart';
 
 const isWrapPairSelection = (a: TokenOption, b: TokenOption): boolean =>
   (a.isNative && b.address === contracts.wrappedReef) || (b.isNative && a.address === contracts.wrappedReef);
@@ -56,6 +61,7 @@ const ROUTE_ALIAS: Record<string, AppRoute> = {
   pools: 'pools',
   creator: 'create-token',
   'create-token': 'create-token',
+  chart: 'chart',
 };
 
 const normalizeRouteSegment = (value: string | null | undefined): string =>
@@ -99,6 +105,34 @@ const addEthereumChainParams = {
   blockExplorerUrls: [reefChain.blockExplorers.default.url],
 };
 
+const TokensView = ({ onSwap }: { onSwap?: () => void }) => {
+  const { address } = useAccount();
+  const { balance: reefBalance, isLoading: isBalanceLoading } = useReefBalance(address);
+  const { price: reefPrice } = useReefPrice();
+  const totalUsdValue = reefBalance * reefPrice;
+
+  return (
+    <div className="max-w-7xl mx-auto px-6 py-6">
+      <section className="mb-8">
+        <PortfolioSummary
+          totalBalance={totalUsdValue}
+          availableBalance={totalUsdValue}
+          stakedBalance={0}
+          isLoading={isBalanceLoading}
+        />
+      </section>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <AssetTabs onSwap={onSwap} />
+        </div>
+        <div className="lg:col-span-1">
+          <ActivityPanel />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App = () => {
   const { address, chainId, isConnected } = useAccount();
   const { connectors, connectAsync, isPending: isConnecting } = useConnect();
@@ -136,21 +170,11 @@ const App = () => {
 
   const [importAddress, setImportAddress] = useState('');
   const [importError, setImportError] = useState('');
-  const [assetTab, setAssetTab] = useState<'tokens' | 'nfts'>('tokens');
-  const [showBalances, setShowBalances] = useState(true);
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => {
     if (typeof window === 'undefined') return 'tokens';
     return resolveRouteFromLocation(window.location);
   });
-  const [creatorTokenName, setCreatorTokenName] = useState('');
-  const [creatorSymbol, setCreatorSymbol] = useState('');
-  const [creatorSupply, setCreatorSupply] = useState('');
-  const [creatorBurnable, setCreatorBurnable] = useState(true);
-  const [creatorMintable, setCreatorMintable] = useState(true);
-  const [creatorIcon, setCreatorIcon] = useState('');
-  const [creatorConfirmOpen, setCreatorConfirmOpen] = useState(false);
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
-  const [creatorStatus, setCreatorStatus] = useState('');
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
@@ -626,23 +650,6 @@ const App = () => {
     setSlippageText(trimDecimalString(percentage.toFixed(1)));
   };
 
-  const handleCreatorIconUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const value = typeof reader.result === 'string' ? reader.result : '';
-      setCreatorIcon(value);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const confirmCreatorDraft = () => {
-    setCreatorConfirmOpen(false);
-    setCreatorStatus('Token draft confirmed. Wire this form to your deploy script to publish on-chain.');
-  };
-
   const canSwap =
     isConnected &&
     !isWrongChain &&
@@ -658,31 +665,6 @@ const App = () => {
   const detailsRate = isWrapPair
     ? `1 ${tokenIn.symbol} = 1 ${tokenOut.symbol}`
     : routeLabel || '-';
-  const walletReefBalanceNumber = Number(formatUnits(walletNativeBalance, nativeReef.decimals));
-  const formattedWalletReefBalance = formatDisplayAmount(walletNativeBalance, nativeReef.decimals, 2);
-  const formattedWalletReefUsd = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(walletReefBalanceNumber * REEF_USD_PRICE);
-  const formattedReefUsdPrice = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 6,
-    maximumFractionDigits: 6,
-  }).format(REEF_USD_PRICE);
-  const formattedReefTokenAmount = new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(walletReefBalanceNumber);
-  const formattedReefTokenUsdValue = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(walletReefBalanceNumber * REEF_USD_PRICE);
-  const balanceOrHidden = (value: string): string => (showBalances ? value : '••••••');
   const amountSliderValue = useMemo(() => {
     if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
     const percent = Number((parsedAmountIn * 10_000n) / balanceIn) / 100;
@@ -692,18 +674,6 @@ const App = () => {
     const mapped = Math.round(clampedSlippage * 5);
     return Math.max(0, Math.min(100, mapped));
   }, [clampedSlippage]);
-  const creatorValidationMsg = useMemo(() => {
-    if (!creatorTokenName.trim()) return 'Set token name';
-    if (!creatorSymbol.trim()) return 'Set token symbol';
-    if (!creatorSupply.trim()) return 'Set initial supply';
-    const parsedSupply = Number(creatorSupply);
-    if (!Number.isInteger(parsedSupply) || parsedSupply <= 0) {
-      return 'Initial supply must be a positive whole number';
-    }
-    return '';
-  }, [creatorSupply, creatorSymbol, creatorTokenName]);
-  const creatorSymbolUpper = creatorSymbol.trim().toUpperCase();
-  const creatorSupplyFormatted = creatorSupply ? Uik.utils.formatHumanAmount(creatorSupply) : '0';
   const swapButtonLabel = isSwapping
     ? isWrapPair
       ? tokenIn.isNative
@@ -764,125 +734,6 @@ const App = () => {
     return rows;
   }, [lastTxHash]);
 
-  const homeAssetPanelView = (
-    <section className="w-full pl-6">
-      <div className="bg-transparent border-b border-border rounded-none w-full justify-start gap-4 h-auto p-0 mb-4 flex">
-        <button
-          type="button"
-          onClick={() => setAssetTab('tokens')}
-          className={`text-base font-semibold rounded-none border-b-2 px-0 pb-3 ${
-            assetTab === 'tokens'
-              ? 'border-primary text-[#1b1530]'
-              : 'border-transparent text-[#8f8a9b]'
-          }`}
-        >
-          Tokens
-        </button>
-        <button
-          type="button"
-          onClick={() => setAssetTab('nfts')}
-          className={`text-base font-semibold rounded-none border-b-2 px-0 pb-3 ${
-            assetTab === 'nfts'
-              ? 'border-primary text-[#1b1530]'
-              : 'border-transparent text-[#8f8a9b]'
-          }`}
-        >
-          NFTs
-        </button>
-      </div>
-
-      {assetTab === 'tokens' ? (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 flex items-center justify-center">
-                <Uik.ReefIcon className="h-10 w-10 text-[#7a3bbd]" />
-              </div>
-              <div>
-                <div className="text-[2.2rem] font-semibold text-[#1b1530] uppercase leading-none">REEF</div>
-                <div className="text-[2.2rem] font-medium text-[#1b1530] leading-none mt-1">{formattedReefUsdPrice}</div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-5">
-              <div className="text-right">
-                <p className="text-[3rem] font-semibold bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent leading-none">
-                  {balanceOrHidden(formattedReefTokenUsdValue)}
-                </p>
-                <p className="text-[2rem] font-medium text-[#1b1530] mt-1 leading-none">
-                  {showBalances ? `${formattedReefTokenAmount} REEF` : '••••••'}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="rounded-[12px] px-6 py-5 text-white bg-[#8f2fb4] shadow-md hover:bg-[#7d29a0] gap-2 inline-flex items-center"
-                onClick={() => navigateRoute('swap')}
-              >
-                <FaPaperPlane className="h-4 w-4" />
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center gap-6 py-14 text-center">
-          <p className="text-lg font-semibold text-[#8f8a9b]">Your wallet doesn't own any NFTs.</p>
-        </div>
-      )}
-    </section>
-  );
-
-  const homeActivityPanelView = (
-    <section className="bg-transparent rounded-2xl border-0 p-0 shadow-none">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-xl font-semibold text-[#1b1530]">Activity</h3>
-        <a
-          href={reefChain.blockExplorers.default.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-full bg-[#efe7f6] px-5 py-2 text-sm font-semibold text-[#b13c8e]"
-        >
-          <ExternalLink className="w-4 h-4" />
-          Open Explorer
-        </a>
-      </div>
-
-      <div className="rounded-3xl bg-white shadow-sm border border-[#ebe6f4]">
-        {activityRows.map((row, index) => (
-          <div key={row.id}>
-            <a href={row.href} target="_blank" rel="noopener noreferrer" className="block">
-              <div
-                className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
-                  index === 0 ? 'rounded-t-3xl' : ''
-                } ${index === activityRows.length - 1 ? 'rounded-b-3xl' : ''}`}
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
-                    {row.direction === 'up' ? (
-                      <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
-                    ) : (
-                      <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-base font-semibold text-[#1b1530]">{row.title}</p>
-                    <p className="text-sm font-medium text-[#8e899c]">{row.time}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="text-base font-semibold text-[#a8a4b3]">{showBalances ? row.amount : '••••••'}</span>
-                  {showBalances ? <Uik.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" /> : null}
-                </div>
-              </div>
-            </a>
-            {index < activityRows.length - 1 ? <div className="mx-6 h-px bg-[#ebe6f4]" /> : null}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-
   const activityCardView = (
     <section className="activity-card">
       <div className="activity-head">
@@ -916,44 +767,94 @@ const App = () => {
   );
 
   const swapStageView = (
-    <section className="swap-stage">
-      <article className="swap-modal swap-modal--pro">
-        <div className="modal-head">
-          <h2>Swap</h2>
-          <div className="modal-actions">
-            <button
-              type="button"
-              className="swap-info-btn"
-              onClick={() => setConnectionInfoOpen(true)}
-              aria-label="Open connection details"
-            >
-              i
-            </button>
-            <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
-              ×
-            </button>
+    <div className="flex justify-center py-8 px-4">
+      <div style={{ width: '100%', maxWidth: 520 }}>
+        <Uik.Card>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-5">
+            <Uik.Text type="headline">Trade</Uik.Text>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setConnectionInfoOpen(true)}
+                aria-label="Connection info"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-light)',
+                  fontSize: 18,
+                  lineHeight: 1,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                }}
+              >
+                ⚙
+              </button>
+              <button
+                type="button"
+                onClick={() => setAmountInText('')}
+                aria-label="Reset"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-light)',
+                  fontSize: 20,
+                  lineHeight: 1,
+                  padding: '2px 6px',
+                  borderRadius: 6,
+                }}
+              >
+                ×
+              </button>
+            </div>
           </div>
-        </div>
 
-        <div className="swap-box">
-          <div className="field-grid">
-            <TokenSelect label="From" value={tokenIn} options={tokens} onChange={setTokenIn} />
-            <label className="amount-field">
-              <span>Amount</span>
+          {/* From token box */}
+          <div
+            style={{
+              background: 'var(--neomorph-in, #e8e3f4)',
+              borderRadius: 16,
+              padding: '14px 16px',
+              marginBottom: 8,
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>From</span>
+              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>
+                Balance: <strong style={{ color: 'var(--text)' }}>{formattedBalanceIn} {tokenIn.symbol}</strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div style={{ flexShrink: 0 }}>
+                <TokenSelect label="" value={tokenIn} options={tokens} onChange={setTokenIn} />
+              </div>
               <input
                 value={amountInText}
                 onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
                 inputMode="decimal"
                 placeholder="0.0"
+                style={{
+                  flex: 1,
+                  background: 'none',
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: 'var(--text)',
+                  textAlign: 'right',
+                  minWidth: 0,
+                }}
               />
-              <small>Balance: {formattedBalanceIn} {tokenIn.symbol}</small>
-            </label>
+            </div>
           </div>
 
-          <div className="swap-slider-group">
-            <div className="swap-slider-group__head">
-              <span>Amount preset</span>
-              <strong>{amountSliderValue}%</strong>
+          {/* Amount slider */}
+          <div style={{ padding: '10px 4px 4px' }}>
+            <div className="flex items-center justify-between mb-1">
+              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Amount</span>
+              <strong style={{ fontSize: 12, color: 'var(--text)' }}>{amountSliderValue}%</strong>
             </div>
             <Uik.Slider
               value={amountSliderValue}
@@ -962,13 +863,24 @@ const App = () => {
               tooltip={`${amountSliderValue}%`}
               onChange={(position: number) => setAmountByPercent(position)}
             />
-            <div className="preset-strip">
+            <div className="flex gap-2 mt-2">
               {AMOUNT_PRESETS.map((percent) => (
                 <button
                   key={percent}
                   type="button"
-                  className="preset-button"
                   onClick={() => setAmountByPercent(percent)}
+                  style={{
+                    flex: 1,
+                    padding: '4px 0',
+                    borderRadius: 8,
+                    border: '1px solid var(--border-color-dark, #c9c3de)',
+                    background: amountSliderValue === percent ? 'var(--primary)' : 'transparent',
+                    color: amountSliderValue === percent ? '#fff' : 'var(--text-light)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
                 >
                   {percent}%
                 </button>
@@ -976,51 +888,118 @@ const App = () => {
             </div>
           </div>
 
-          <div className="amount-controls">
-            <button type="button" className="icon-switch" onClick={onSwitchTokens} aria-label="Switch tokens">
+          {/* Switch button */}
+          <div className="flex justify-center my-3">
+            <button
+              type="button"
+              onClick={onSwitchTokens}
+              aria-label="Switch tokens"
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: '50%',
+                border: '2px solid var(--border-color-dark, #c9c3de)',
+                background: 'var(--neomorph-in, #e8e3f4)',
+                color: 'var(--text)',
+                fontSize: 18,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'transform 0.2s',
+              }}
+            >
               ↕
             </button>
           </div>
 
-          <div className="field-grid">
-            <TokenSelect label="To" value={tokenOut} options={tokens} onChange={setTokenOut} />
-            <label className="amount-field">
-              <span>Estimated Output</span>
-              <input value={amountOutText} readOnly placeholder="0.0" />
-              <small>Balance: {formattedBalanceOut} {tokenOut.symbol}</small>
-            </label>
+          {/* To token box */}
+          <div
+            style={{
+              background: 'var(--neomorph-in, #e8e3f4)',
+              borderRadius: 16,
+              padding: '14px 16px',
+              marginBottom: 12,
+            }}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</span>
+              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>
+                Balance: <strong style={{ color: 'var(--text)' }}>{formattedBalanceOut} {tokenOut.symbol}</strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div style={{ flexShrink: 0 }}>
+                <TokenSelect label="" value={tokenOut} options={tokens} onChange={setTokenOut} />
+              </div>
+              <input
+                value={amountOutText}
+                readOnly
+                placeholder="0.0"
+                style={{
+                  flex: 1,
+                  background: 'none',
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: 26,
+                  fontWeight: 700,
+                  color: 'var(--text)',
+                  textAlign: 'right',
+                  minWidth: 0,
+                  opacity: 0.7,
+                }}
+              />
+            </div>
           </div>
 
-          <div className="detail-box">
-            <div>
-              <span>Rate</span>
-              <strong>{detailsRate}</strong>
-            </div>
-            <div>
-              <span>Fee</span>
-              <strong>{isWrapPair ? '0%' : '0.30%'}</strong>
-            </div>
-            <div>
-              <span>Slippage</span>
-              <strong>{clampedSlippage.toFixed(1)}%</strong>
-            </div>
-            <div>
-              <span>Quote</span>
-              <strong>{isWrapPair ? '1:1 wrap quote' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
-            </div>
+          {/* Rate / fee / slippage info */}
+          <div
+            style={{
+              background: 'var(--neomorph-in, #e8e3f4)',
+              borderRadius: 12,
+              padding: '10px 14px',
+              marginBottom: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            {[
+              { label: 'Rate', value: detailsRate },
+              { label: 'Fee', value: isWrapPair ? '0%' : '0.30%' },
+              { label: 'Slippage', value: `${clampedSlippage.toFixed(1)}%` },
+              { label: 'Min. received', value: minOut > 0n ? `${formatDisplayAmount(minOut, tokenOut.decimals, 6)} ${tokenOut.symbol}` : '-' },
+            ].map((item) => (
+              <div key={item.label} className="flex items-center justify-between">
+                <span style={{ fontSize: 12, color: 'var(--text-light)' }}>{item.label}</span>
+                <strong style={{ fontSize: 12, color: 'var(--text)' }}>{item.value}</strong>
+              </div>
+            ))}
           </div>
 
-          <div className="slippage-block">
-            <div className="slippage-row">
-              <label>
-                <span>Slippage tolerance</span>
+          {/* Slippage control */}
+          <div style={{ marginBottom: 14 }}>
+            <div className="flex items-center justify-between mb-1">
+              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Slippage tolerance</span>
+              <div className="flex items-center gap-2">
                 <input
                   value={slippageText}
                   onChange={(event) => setSlippageText(normalizeInput(event.target.value))}
                   inputMode="decimal"
+                  style={{
+                    width: 50,
+                    textAlign: 'right',
+                    background: 'var(--neomorph-in, #e8e3f4)',
+                    border: '1px solid var(--border-color-dark, #c9c3de)',
+                    borderRadius: 6,
+                    padding: '2px 6px',
+                    fontSize: 12,
+                    color: 'var(--text)',
+                    outline: 'none',
+                  }}
                 />
-              </label>
-              <strong>{clampedSlippage.toFixed(1)}%</strong>
+                <strong style={{ fontSize: 12, color: 'var(--text)' }}>{clampedSlippage.toFixed(1)}%</strong>
+              </div>
             </div>
             <Uik.Slider
               value={slippageSliderValue}
@@ -1029,115 +1008,113 @@ const App = () => {
               tooltip={`${clampedSlippage.toFixed(1)}%`}
               onChange={setSlippageFromSlider}
             />
-            <div className="preset-strip">
+            <div className="flex gap-2 mt-2">
               {SLIPPAGE_PRESETS.map((preset) => (
-                <button key={preset} type="button" className="preset-button" onClick={() => setSlippagePreset(preset)}>
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => setSlippagePreset(preset)}
+                  style={{
+                    flex: 1,
+                    padding: '4px 0',
+                    borderRadius: 8,
+                    border: '1px solid var(--border-color-dark, #c9c3de)',
+                    background: slippageText === preset ? 'var(--primary)' : 'transparent',
+                    color: slippageText === preset ? '#fff' : 'var(--text-light)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s',
+                  }}
+                >
                   {preset}%
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="import-token">
+          {/* Import token */}
+          <div className="flex gap-2 mb-3">
             <input
               placeholder="Import token by contract address"
               value={importAddress}
               onChange={(event) => setImportAddress(event.target.value)}
+              style={{
+                flex: 1,
+                background: 'var(--neomorph-in, #e8e3f4)',
+                border: '1px solid var(--border-color-dark, #c9c3de)',
+                borderRadius: 10,
+                padding: '8px 12px',
+                fontSize: 13,
+                color: 'var(--text)',
+                outline: 'none',
+              }}
             />
-            <button type="button" className="secondary" onClick={importToken}>
+            <button
+              type="button"
+              onClick={importToken}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 10,
+                border: '1px solid var(--border-color-dark, #c9c3de)',
+                background: 'transparent',
+                color: 'var(--text)',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
               Import
             </button>
           </div>
 
-          {importError ? <p className="error">{importError}</p> : null}
+          {importError ? (
+            <p style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{importError}</p>
+          ) : null}
 
-          <div className="meta-grid">
-            <div>
-              <span>Route</span>
-              <strong>{routeLabel || '-'}</strong>
-            </div>
-            <div>
-              <span>Minimum Received</span>
-              <strong>{minOut > 0n ? `${formatDisplayAmount(minOut, tokenOut.decimals, 8)} ${tokenOut.symbol}` : '-'}</strong>
-            </div>
-            <div>
-              <span>First Hop Pair</span>
-              <strong>{isWrapPair ? 'Not required' : firstHopPair ? shortAddress(firstHopPair) : 'Not found yet'}</strong>
-            </div>
-            <div>
-              <span>Quote Status</span>
-              <strong>{isWrapPair ? 'Ready' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
-            </div>
-          </div>
-
+          {/* Action button */}
           {isWrongChain ? (
-            <button type="button" className="swap-primary-btn" onClick={switchToReef} disabled={isSwitching}>
-              {isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
-            </button>
+            <Uik.Button
+              text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
+              fill
+              size="large"
+              disabled={isSwitching}
+              onClick={switchToReef}
+            />
           ) : requiresApproval ? (
-            <button
-              type="button"
-              className="swap-primary-btn"
-              onClick={approve}
+            <Uik.Button
+              text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
+              fill
+              size="large"
               disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}
-            >
-              {isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
-            </button>
+              onClick={approve}
+            />
           ) : (
-            <button type="button" className="swap-primary-btn" onClick={swap} disabled={!canSwap || isSwapping || isRefreshing}>
-              {swapButtonLabel}
-            </button>
+            <Uik.Button
+              text={swapButtonLabel}
+              fill
+              size="large"
+              disabled={!canSwap || isSwapping || isRefreshing}
+              onClick={swap}
+            />
           )}
 
-          {statusMessage ? <p className="status">{statusMessage}</p> : null}
-          {actionError ? <p className="error">{actionError}</p> : null}
-        </div>
-      </article>
-    </section>
+          {statusMessage ? (
+            <p style={{ color: 'var(--success)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{statusMessage}</p>
+          ) : null}
+          {actionError ? (
+            <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{actionError}</p>
+          ) : null}
+        </Uik.Card>
+      </div>
+    </div>
   );
 
-  const tokensRouteView = (
-    <>
-      <section className="mb-8">
-        <div className="flex items-center gap-6">
-          <div className="flex-1 p-6 bg-transparent rounded-2xl shadow-none border-0">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-lg font-semibold text-[#2a2440]">Balance</span>
-              <button
-                type="button"
-                onClick={() => setShowBalances((current) => !current)}
-                className="text-[#7d7790] hover:text-[#5f5a70] transition-colors"
-              >
-                {showBalances ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent text-[5.6rem] leading-none font-semibold">
-              {balanceOrHidden(formattedWalletReefUsd)}
-            </p>
-          </div>
-          <BuyReefButton onClick={() => navigateRoute('swap')} />
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          {homeAssetPanelView}
-        </div>
-        <aside className="lg:col-span-1">
-          {homeActivityPanelView}
-        </aside>
-      </section>
-    </>
-  );
+  const tokensRouteView = <TokensView onSwap={() => navigateRoute('swap')} />;
 
   const swapRouteView = (
     <>
-      <section className="dashboard-grid dashboard-grid--swap-route">
-        {swapStageView}
-        <aside className="activity-panel">
-          {activityCardView}
-        </aside>
-      </section>
+      {swapStageView}
       <Uik.Modal
         className="connection-modal"
         title="Connection"
@@ -1167,252 +1144,123 @@ const App = () => {
     </>
   );
 
-  const creatorRouteView = (
-    <>
-      <section className="creator">
-        <div className="creator__form panel-card">
-          <div className="creator__header">
-            <h2>Create your token</h2>
-            <p>Create a Reef token draft with the same Creator UX from reef-app.</p>
-          </div>
-          <label className="creator-icon-upload">
-            <input type="file" accept="image/*" onChange={handleCreatorIconUpload} />
-            {creatorIcon ? <img src={creatorIcon} alt="Token icon" /> : <span>Upload icon</span>}
-          </label>
+  const creatorRouteView = <CreatorPage />;
 
-          <Uik.Form>
-            <div className="creator__form-main">
-              <Uik.Input
-                label="Token name"
-                placeholder="MyToken"
-                value={creatorTokenName}
-                maxLength={42}
-                onInput={(event) => setCreatorTokenName((event.target as HTMLInputElement).value)}
-              />
-
-              <Uik.Input
-                className="creator__token-symbol-input"
-                label="Token symbol"
-                placeholder="MTK"
-                value={creatorSymbol}
-                maxLength={12}
-                onInput={(event) => setCreatorSymbol((event.target as HTMLInputElement).value)}
-              />
-            </div>
-
-            <Uik.Input
-              label="Initial supply"
-              placeholder="0"
-              value={creatorSupply}
-              min={1}
-              onInput={(event) => setCreatorSupply((event.target as HTMLInputElement).value.replace(/[^0-9]/g, ''))}
-            />
-
-            <div className="creator__form-bottom">
-              <Uik.Toggle
-                label="Burnable"
-                onText="Yes"
-                offText="No"
-                value={creatorBurnable}
-                onChange={() => setCreatorBurnable((current) => !current)}
-              />
-              <Uik.Toggle
-                label="Mintable"
-                onText="Yes"
-                offText="No"
-                value={creatorMintable}
-                onChange={() => setCreatorMintable((current) => !current)}
-              />
-            </div>
-          </Uik.Form>
-        </div>
-
-        <div className="creator__preview panel-card">
-          <p className="creator__preview-title">Token preview</p>
-          <div className="creator__preview-token">
-            <div className="creator__preview-token-image">
-              {creatorIcon ? <img src={creatorIcon} alt="Token icon preview" /> : <Uik.ReefIcon />}
-            </div>
-            <div className="creator__preview-token-info">
-              <div className="creator__preview-token-name">{creatorTokenName || 'Token name'}</div>
-              <div className="creator__preview-token-symbol">{creatorSymbolUpper || 'TOKEN'}</div>
-            </div>
-            <div className="creator__preview-token-supply">{creatorSupplyFormatted}</div>
-          </div>
-          <div className={`creator__preview-info ${!creatorBurnable ? 'creator__preview-info--disabled' : ''}`}>
-            <strong>{creatorBurnable ? 'Burnable enabled' : 'Burnable disabled'}</strong>
-            <span>Existing tokens {creatorBurnable ? 'can' : 'cannot'} be destroyed.</span>
-          </div>
-          <div className={`creator__preview-info ${!creatorMintable ? 'creator__preview-info--disabled' : ''}`}>
-            <strong>{creatorMintable ? 'Mintable enabled' : 'Mintable disabled'}</strong>
-            <span>New tokens {creatorMintable ? 'can' : 'cannot'} be created later.</span>
-          </div>
-          <Uik.Button
-            fill={!creatorValidationMsg}
-            disabled={!!creatorValidationMsg}
-            text="Create token"
-            size="large"
-            onClick={() => setCreatorConfirmOpen(true)}
-          />
-          {creatorValidationMsg ? <p className="error">{creatorValidationMsg}</p> : null}
-          {creatorStatus ? <p className="status">{creatorStatus}</p> : null}
-        </div>
-      </section>
-
-      <Uik.Modal
-        className="confirm-token"
-        title="Confirm your token"
-        isOpen={creatorConfirmOpen}
-        onClose={() => setCreatorConfirmOpen(false)}
-        footer={(
-          <Uik.Button
-            text="Create token"
-            fill
-            size="large"
-            disabled={!!creatorValidationMsg}
-            onClick={confirmCreatorDraft}
-          />
-        )}
-      >
-        <div className="confirm-token-summary">
-          <div className="confirm-token-summary-item">
-            <span>Token name</span>
-            <strong>{creatorTokenName || '-'}</strong>
-          </div>
-          <div className="confirm-token-summary-item">
-            <span>Token symbol</span>
-            <strong>{creatorSymbolUpper || '-'}</strong>
-          </div>
-          <div className="confirm-token-summary-item">
-            <span>Initial supply</span>
-            <strong>{creatorSupplyFormatted}</strong>
-          </div>
-          <div className="confirm-token-summary-item">
-            <span>Burnable</span>
-            <strong>{creatorBurnable ? 'Yes' : 'No'}</strong>
-          </div>
-          <div className="confirm-token-summary-item">
-            <span>Mintable</span>
-            <strong>{creatorMintable ? 'Yes' : 'No'}</strong>
-          </div>
-        </div>
-      </Uik.Modal>
-    </>
-  );
+  const REEF_WREEF_POOL = '0x3D37D5452BDeA164666291890D2830A82be141E1';
 
   const poolsRouteView = (
-    <section className="panel-card route-placeholder">
-      <h2>Pools</h2>
-      <p>Pool list and liquidity actions can be wired next with your deployed Factory + Router addresses.</p>
-      <button type="button" className="wallet-connect-btn" onClick={() => navigateRoute('swap')}>
-        Open Swap
-      </button>
-    </section>
+    <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="mb-8">
+        <h1 className="text-2xl font-semibold text-[#1b1530]">Liquidity Pools</h1>
+        <p className="text-sm text-[#8e899c] mt-1">Add liquidity to earn fees from swaps</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Main pools area */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* All Pools header */}
+          <div className="rounded-3xl bg-white shadow-sm border border-[#ebe6f4] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#ebe6f4] flex items-center justify-between">
+              <span className="text-base font-semibold text-[#1b1530]">All Pools</span>
+              <button
+                type="button"
+                onClick={() => navigateRoute('swap')}
+                className="rounded-full bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-sm font-semibold px-4 py-2 hover:brightness-110 transition-all"
+              >
+                + New Position
+              </button>
+            </div>
+            {/* Header row */}
+            <div className="px-6 py-2 grid grid-cols-5 text-xs font-semibold text-[#8e899c] uppercase tracking-wide border-b border-[#ebe6f4]">
+              <span className="col-span-2">Pool</span>
+              <span className="text-right">Fee</span>
+              <span className="text-right">TVL</span>
+              <span className="text-right">Actions</span>
+            </div>
+            {/* REEF-WREEF pool row */}
+            <div className="px-6 py-4 grid grid-cols-5 items-center hover:bg-[#f8f5ff] transition-colors">
+              <div className="col-span-2 flex items-center gap-3">
+                <div className="flex -space-x-2">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm">
+                    <Uik.ReefIcon className="h-5 w-5 text-white" />
+                  </div>
+                  <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm">
+                    <Uik.ReefSign className="h-4 w-4 text-[#7a3bbd]" />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[#1b1530]">REEF / WREEF</p>
+                  <p className="text-xs text-[#8e899c]">{REEF_WREEF_POOL.slice(0, 6)}…{REEF_WREEF_POOL.slice(-4)}</p>
+                </div>
+              </div>
+              <span className="text-sm font-medium text-right text-[#5d3bad]">0.3%</span>
+              <span className="text-sm font-medium text-right text-[#1b1530]">—</span>
+              <div className="flex items-center gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => navigateRoute('chart')}
+                  className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
+                >
+                  Chart
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigateRoute('swap')}
+                  className="rounded-xl bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-xs font-semibold px-3 py-1.5 hover:brightness-110 transition-all"
+                >
+                  Trade
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Your Positions */}
+          <div className="rounded-3xl bg-white shadow-sm border border-[#ebe6f4] overflow-hidden">
+            <div className="px-6 py-4 border-b border-[#ebe6f4]">
+              <span className="text-base font-semibold text-[#1b1530]">Your Positions</span>
+            </div>
+            <div className="px-6 py-10 text-center">
+              <p className="text-sm text-[#8e899c]">No liquidity positions yet. Add liquidity to start earning fees.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Stats sidebar */}
+        <div className="space-y-4">
+          <div className="rounded-3xl bg-white shadow-sm border border-[#ebe6f4] p-6">
+            <h3 className="text-base font-semibold text-[#1b1530] mb-4">Pool Stats</h3>
+            <div className="space-y-3">
+              {[
+                { label: 'Active Pairs', value: '1' },
+                { label: '24h Volume', value: '—' },
+                { label: 'Total Value Locked', value: '—' },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <span className="text-sm text-[#8e899c]">{item.label}</span>
+                  <span className="text-sm font-semibold text-[#1b1530]">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl bg-[#f8f5ff] border border-[#ebe6f4] p-6">
+            <p className="text-sm font-semibold text-[#1b1530] mb-1">How Pools Work</p>
+            <p className="text-xs text-[#8e899c] leading-relaxed">
+              Provide liquidity to earn a share of the 0.3% fee on all trades proportional to your share of the pool.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 
+  const chartRouteView = <ChartView onNavigate={navigateRoute} />;
+
   return (
-    <div className="app-shell">
-      {isConnected && activeRoute === 'tokens' ? (
-        <header className="flex items-center justify-between px-6 py-3 bg-card border-b border-border bg-[#f2f0f8]">
-          <div className="flex items-center gap-8">
-            <button type="button" className="flex items-center gap-2 bg-transparent border-0 p-0" onClick={() => navigateRoute('tokens')}>
-              <Uik.ReefLogo />
-            </button>
-            <nav className="flex items-center gap-7">
-              {NAV_ROUTES.map((item) => (
-                <button
-                  key={item.route}
-                  type="button"
-                  onClick={() => navigateRoute(item.route)}
-                  className={`text-[2rem] font-semibold leading-none transition-colors ${
-                    activeRoute === item.route
-                      ? 'bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent'
-                      : 'text-[#7f7991] hover:text-[#5d3bad]'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3 rounded-full bg-[#f1edf8] px-5 py-3 shadow-sm">
-              <Uik.ReefIcon className="h-7 w-7 text-[#7a3bbd]" />
-              <span className="bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-base font-semibold tracking-tight text-transparent">
-                {balanceOrHidden(formattedWalletReefBalance)}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="flex items-center gap-2 bg-muted rounded-full px-4 py-2 h-auto hover:bg-muted/80 border border-transparent"
-              onClick={isWrongChain ? switchToReef : undefined}
-              disabled={isWrongChain && isSwitching}
-            >
-              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-reef-purple to-reef-pink" />
-              <span className="text-sm font-medium text-foreground">
-                {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : 'Account'}
-              </span>
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-            </button>
-          </div>
-        </header>
-      ) : (
-        <header className="nav-content navigation d-flex d-flex-space-between">
-          <div className="navigation__wrapper">
-            <div className="navigation__left">
-              <button type="button" className="logo-btn" onClick={() => navigateRoute('tokens')}>
-                <Uik.ReefLogo className="navigation__logo" />
-                <span className="navigation__logo-suffix">swap</span>
-              </button>
-              <nav className="d-flex justify-content-end d-flex-vert-center">
-                <ul className="navigation_menu-items">
-                  {NAV_ROUTES.map((item) => (
-                    <li
-                      key={item.route}
-                      className={`navigation_menu-items_menu-item ${activeRoute === item.route ? 'navigation_menu-items_menu-item--active' : ''}`}
-                    >
-                      <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute(item.route)}>
-                        {item.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </nav>
-            </div>
+    <div className="min-h-screen bg-background">
+      <AppHeader activeRoute={activeRoute} onNavigate={navigateRoute} />
 
-            <nav className="navigation__right d-flex d-flex-vert-center">
-              {isConnected ? (
-                <>
-                  <span className="network-chip">Reef ({reefChain.id})</span>
-                  <div className="nav-account">
-                    <div className="nav-account_balance">
-                      <Uik.ReefIcon className="nav-account_icon" />
-                      {formattedWalletReefBalance} REEF
-                    </div>
-                  </div>
-                  <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
-                    Disconnect
-                  </button>
-                  <button
-                    type="button"
-                    className="wallet-pill wallet-pill--account"
-                    onClick={isWrongChain ? switchToReef : undefined}
-                    disabled={isWrongChain && isSwitching}
-                  >
-                    {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : `Account  ${shortAddress(address)}`}
-                  </button>
-                </>
-              ) : (
-                <button type="button" className="wallet-connect-btn" onClick={connectWallet} disabled={isConnecting}>
-                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-                </button>
-              )}
-            </nav>
-          </div>
-        </header>
-      )}
-
-      <main className={isConnected && activeRoute === 'tokens' ? 'max-w-7xl mx-auto px-6 py-8' : 'dashboard-content'}>
+      <main className={activeRoute === 'tokens' || activeRoute === 'pools' || activeRoute === 'chart' || activeRoute === 'swap' ? '' : 'dashboard-content'}>
         {isConnected ? (
           activeRoute === 'tokens' ? (
             tokensRouteView
@@ -1420,44 +1268,43 @@ const App = () => {
             swapRouteView
           ) : activeRoute === 'create-token' ? (
             creatorRouteView
+          ) : activeRoute === 'chart' ? (
+            chartRouteView
           ) : (
             poolsRouteView
           )
         ) : (
-          <section className="connect-state-card">
-            <div className="connect-state-orb connect-state-orb-left" />
-            <div className="connect-state-orb connect-state-orb-right" />
-            <div className="connect-state-content">
-              <div className="connect-state-icon">
-                <Uik.ReefIcon />
+          <div className="relative overflow-hidden rounded-3xl bg-[#f2eff8] px-10 py-16 text-center shadow-sm mt-8">
+            <div className="absolute -left-20 -top-20 h-64 w-64 rounded-full bg-gradient-to-br from-[#a93185]/20 to-[#5d3bad]/20 blur-2xl" />
+            <div className="absolute -right-16 -bottom-16 h-64 w-64 rounded-full bg-gradient-to-br from-[#5d3bad]/20 to-[#a93185]/20 blur-2xl" />
+            <div className="relative z-10 mx-auto flex max-w-xl flex-col items-center">
+              <div className="relative mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-white/70 shadow-sm overflow-hidden">
+                <Uik.ReefIcon className="h-10 w-10 text-[#7a3bbd] relative z-10" />
               </div>
-              <h2>Connect to Reefswap</h2>
-              <p>Connect MetaMask to view balances, activity, and swap tokens on Reef chain.</p>
-              <div className="connect-state-badges">
-                <span>Secure</span>
-                <span>Non-custodial</span>
-                <span>Mainnet ready</span>
+              <h2 className="text-3xl font-semibold text-[#1b1530]">Connect to Reefswap</h2>
+              <p className="mt-2 text-base text-[#8e899c]">
+                Connect MetaMask to view balances, activity, and swap tokens on Reef chain.
+              </p>
+              <div className="mt-6 flex items-center gap-3 text-sm text-[#8e899c]">
+                <span className="rounded-full bg-white/70 px-3 py-1">Secure</span>
+                <span className="rounded-full bg-white/70 px-3 py-1">Non‑custodial</span>
+                <span className="rounded-full bg-white/70 px-3 py-1">Mainnet ready</span>
               </div>
-              <button type="button" className="connect-state-btn" onClick={connectWallet} disabled={isConnecting}>
-                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-              </button>
-              {statusMessage ? <p className="status">{statusMessage}</p> : null}
-              {actionError ? <p className="error">{actionError}</p> : null}
             </div>
-            <Uik.Bubbles className="connect-state-bubbles" />
-          </section>
+            <Uik.Bubbles className="absolute inset-0 opacity-60 pointer-events-none" />
+          </div>
         )}
       </main>
-      {!isConnected ? (
-        <footer className="unlogged-footer">
+
+      {!isConnected && (
+        <footer className="fixed bottom-0 left-0 right-0 bg-[#f2f0f8] border-t border-border px-6 py-3">
           <button
             type="button"
-            className="add-metamask-btn"
+            className="rounded-full bg-white/70 text-[#5d3bad] hover:bg-white hover:text-[#5d3bad] hover:scale-105 hover:shadow-md active:scale-95 shadow-sm text-sm font-medium px-4 py-2 transition-all duration-200 ease-out flex items-center gap-1.5"
             onClick={async () => {
               setActionError('');
               try {
                 await addReefChain();
-                setStatusMessage('Reef chain added to MetaMask.');
               } catch (error) {
                 setActionError(getErrorMessage(error));
               }
@@ -1466,12 +1313,12 @@ const App = () => {
             <img
               src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg"
               alt=""
-              className="metamask-logo"
+              className="h-4 w-4"
             />
             Add to MetaMask
           </button>
         </footer>
-      ) : null}
+      )}
     </div>
   );
 };
