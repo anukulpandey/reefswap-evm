@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import Uik from '@reef-chain/ui-kit';
+import { ArrowDownLeft, ArrowUpRight, ChevronDown, ExternalLink, Eye, EyeOff } from 'lucide-react';
+import { FaPaperPlane } from 'react-icons/fa';
 import {
   useAccount,
   useConnect,
@@ -135,6 +137,7 @@ const App = () => {
   const [importAddress, setImportAddress] = useState('');
   const [importError, setImportError] = useState('');
   const [assetTab, setAssetTab] = useState<'tokens' | 'nfts'>('tokens');
+  const [showBalances, setShowBalances] = useState(true);
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => {
     if (typeof window === 'undefined') return 'tokens';
     return resolveRouteFromLocation(window.location);
@@ -150,7 +153,6 @@ const App = () => {
   const [creatorStatus, setCreatorStatus] = useState('');
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
-  const isCompactHomeHeader = isConnected && activeRoute === 'tokens';
   const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
 
   const swapPath = useMemo(() => {
@@ -680,6 +682,7 @@ const App = () => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(walletReefBalanceNumber * REEF_USD_PRICE);
+  const balanceOrHidden = (value: string): string => (showBalances ? value : '••••••');
   const amountSliderValue = useMemo(() => {
     if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
     const percent = Number((parsedAmountIn * 10_000n) / balanceIn) / 100;
@@ -762,54 +765,122 @@ const App = () => {
   }, [lastTxHash]);
 
   const homeAssetPanelView = (
-    <aside className="asset-panel">
-      <div className="asset-tabs">
+    <section className="w-full pl-6">
+      <div className="bg-transparent border-b border-border rounded-none w-full justify-start gap-4 h-auto p-0 mb-4 flex">
         <button
           type="button"
-          className={`asset-tab ${assetTab === 'tokens' ? 'active' : ''}`}
           onClick={() => setAssetTab('tokens')}
+          className={`text-base font-semibold rounded-none border-b-2 px-0 pb-3 ${
+            assetTab === 'tokens'
+              ? 'border-primary text-[#1b1530]'
+              : 'border-transparent text-[#8f8a9b]'
+          }`}
         >
           Tokens
         </button>
         <button
           type="button"
-          className={`asset-tab ${assetTab === 'nfts' ? 'active' : ''}`}
           onClick={() => setAssetTab('nfts')}
+          className={`text-base font-semibold rounded-none border-b-2 px-0 pb-3 ${
+            assetTab === 'nfts'
+              ? 'border-primary text-[#1b1530]'
+              : 'border-transparent text-[#8f8a9b]'
+          }`}
         >
           NFTs
         </button>
       </div>
 
       {assetTab === 'tokens' ? (
-        <div className="token-list token-list--home">
-          <article className="token-row token-row--home">
-            <div className="token-row__left">
-              <div className="token-badge token-badge--reef">
-                <Uik.ReefIcon className="token-badge__icon" />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 flex items-center justify-center">
+                <Uik.ReefIcon className="h-10 w-10 text-[#7a3bbd]" />
               </div>
-              <div className="token-row__meta">
-                <strong>REEF</strong>
-                <small>{formattedReefUsdPrice}</small>
+              <div>
+                <div className="text-[2.2rem] font-semibold text-[#1b1530] uppercase leading-none">REEF</div>
+                <div className="text-[2.2rem] font-medium text-[#1b1530] leading-none mt-1">{formattedReefUsdPrice}</div>
               </div>
             </div>
-            <div className="token-row__right">
-              <div className="token-row__amount">
-                <strong>{formattedReefTokenUsdValue}</strong>
-                <small>{formattedReefTokenAmount} REEF</small>
+
+            <div className="flex items-center gap-5">
+              <div className="text-right">
+                <p className="text-[3rem] font-semibold bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent leading-none">
+                  {balanceOrHidden(formattedReefTokenUsdValue)}
+                </p>
+                <p className="text-[2rem] font-medium text-[#1b1530] mt-1 leading-none">
+                  {showBalances ? `${formattedReefTokenAmount} REEF` : '••••••'}
+                </p>
               </div>
-              <button type="button" className="send-btn" onClick={() => navigateRoute('swap')}>
-                <span className="send-btn__icon">✈</span>
+              <button
+                type="button"
+                className="rounded-[12px] px-6 py-5 text-white bg-[#8f2fb4] shadow-md hover:bg-[#7d29a0] gap-2 inline-flex items-center"
+                onClick={() => navigateRoute('swap')}
+              >
+                <FaPaperPlane className="h-4 w-4" />
                 Send
               </button>
             </div>
-          </article>
+          </div>
         </div>
       ) : (
-        <div className="nft-empty">
-          <p>Your wallet doesn't own any NFTs.</p>
+        <div className="flex flex-col items-center justify-center gap-6 py-14 text-center">
+          <p className="text-lg font-semibold text-[#8f8a9b]">Your wallet doesn't own any NFTs.</p>
         </div>
       )}
-    </aside>
+    </section>
+  );
+
+  const homeActivityPanelView = (
+    <section className="bg-transparent rounded-2xl border-0 p-0 shadow-none">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-semibold text-[#1b1530]">Activity</h3>
+        <a
+          href={reefChain.blockExplorers.default.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-full bg-[#efe7f6] px-5 py-2 text-sm font-semibold text-[#b13c8e]"
+        >
+          <ExternalLink className="w-4 h-4" />
+          Open Explorer
+        </a>
+      </div>
+
+      <div className="rounded-3xl bg-white shadow-sm border border-[#ebe6f4]">
+        {activityRows.map((row, index) => (
+          <div key={row.id}>
+            <a href={row.href} target="_blank" rel="noopener noreferrer" className="block">
+              <div
+                className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
+                  index === 0 ? 'rounded-t-3xl' : ''
+                } ${index === activityRows.length - 1 ? 'rounded-b-3xl' : ''}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
+                    {row.direction === 'up' ? (
+                      <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
+                    ) : (
+                      <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-base font-semibold text-[#1b1530]">{row.title}</p>
+                    <p className="text-sm font-medium text-[#8e899c]">{row.time}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-base font-semibold text-[#a8a4b3]">{showBalances ? row.amount : '••••••'}</span>
+                  {showBalances ? <Uik.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" /> : null}
+                </div>
+              </div>
+            </a>
+            {index < activityRows.length - 1 ? <div className="mx-6 h-px bg-[#ebe6f4]" /> : null}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 
   const activityCardView = (
@@ -1027,22 +1098,33 @@ const App = () => {
 
   const tokensRouteView = (
     <>
-      <section className="portfolio-row portfolio-row--home">
-        <div className="portfolio-summary">
-          <div className="portfolio-label-wrap">
-            <p className="portfolio-label">Balance</p>
-            <span className="portfolio-eye">◌</span>
+      <section className="mb-8">
+        <div className="flex items-center gap-6">
+          <div className="flex-1 p-6 bg-transparent rounded-2xl shadow-none border-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-lg font-semibold text-[#2a2440]">Balance</span>
+              <button
+                type="button"
+                onClick={() => setShowBalances((current) => !current)}
+                className="text-[#7d7790] hover:text-[#5f5a70] transition-colors"
+              >
+                {showBalances ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent text-[5.6rem] leading-none font-semibold">
+              {balanceOrHidden(formattedWalletReefUsd)}
+            </p>
           </div>
-          <h2>{formattedWalletReefUsd}</h2>
+          <BuyReefButton onClick={() => navigateRoute('swap')} />
         </div>
-
-        <BuyReefButton onClick={() => navigateRoute('swap')} />
       </section>
 
-      <section className="dashboard-grid dashboard-grid--tokens">
-        {homeAssetPanelView}
-        <aside className="activity-panel">
-          {activityCardView}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          {homeAssetPanelView}
+        </div>
+        <aside className="lg:col-span-1">
+          {homeActivityPanelView}
         </aside>
       </section>
     </>
@@ -1230,14 +1312,42 @@ const App = () => {
 
   return (
     <div className="app-shell">
-      <header className="nav-content navigation d-flex d-flex-space-between">
-        <div className="navigation__wrapper">
-          <div className={`navigation__left ${isCompactHomeHeader ? 'navigation__left--compact' : ''}`}>
-            <button type="button" className="logo-btn" onClick={() => navigateRoute('tokens')}>
-              <Uik.ReefLogo className="navigation__logo" />
-              {!isCompactHomeHeader ? <span className="navigation__logo-suffix">swap</span> : null}
+      {isConnected && activeRoute === 'tokens' ? (
+        <header className="flex items-center justify-between px-6 py-3 bg-card border-b border-border bg-[#f2f0f8]">
+          <div className="flex items-center gap-8">
+            <button type="button" className="flex items-center gap-2 bg-transparent border-0 p-0" onClick={() => navigateRoute('tokens')}>
+              <Uik.ReefLogo />
             </button>
-            {!isCompactHomeHeader ? (
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 rounded-full bg-[#f1edf8] px-5 py-3 shadow-sm">
+              <Uik.ReefIcon className="h-7 w-7 text-[#7a3bbd]" />
+              <span className="bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-base font-semibold tracking-tight text-transparent">
+                {balanceOrHidden(formattedWalletReefBalance)}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="flex items-center gap-2 bg-muted rounded-full px-4 py-2 h-auto hover:bg-muted/80 border border-transparent"
+              onClick={isWrongChain ? switchToReef : undefined}
+              disabled={isWrongChain && isSwitching}
+            >
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-reef-purple to-reef-pink" />
+              <span className="text-sm font-medium text-foreground">
+                {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : 'Account'}
+              </span>
+              <ChevronDown className="w-4 h-4 text-muted-foreground" />
+            </button>
+          </div>
+        </header>
+      ) : (
+        <header className="nav-content navigation d-flex d-flex-space-between">
+          <div className="navigation__wrapper">
+            <div className="navigation__left">
+              <button type="button" className="logo-btn" onClick={() => navigateRoute('tokens')}>
+                <Uik.ReefLogo className="navigation__logo" />
+                <span className="navigation__logo-suffix">swap</span>
+              </button>
               <nav className="d-flex justify-content-end d-flex-vert-center">
                 <ul className="navigation_menu-items">
                   {NAV_ROUTES.map((item) => (
@@ -1252,29 +1362,10 @@ const App = () => {
                   ))}
                 </ul>
               </nav>
-            ) : null}
-          </div>
+            </div>
 
-          <nav className="navigation__right d-flex d-flex-vert-center">
-            {isConnected ? (
-              isCompactHomeHeader ? (
-                <>
-                  <div className="home-balance-chip">
-                    <Uik.ReefIcon className="home-balance-chip__icon" />
-                    <span>{formattedWalletReefBalance}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="home-account-chip"
-                    onClick={isWrongChain ? switchToReef : undefined}
-                    disabled={isWrongChain && isSwitching}
-                  >
-                    <span className="home-account-chip__dot" />
-                    <span>{isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : 'Account'}</span>
-                    <span className="home-account-chip__caret">⌄</span>
-                  </button>
-                </>
-              ) : (
+            <nav className="navigation__right d-flex d-flex-vert-center">
+              {isConnected ? (
                 <>
                   <span className="network-chip">Reef ({reefChain.id})</span>
                   <div className="nav-account">
@@ -1295,17 +1386,17 @@ const App = () => {
                     {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : `Account  ${shortAddress(address)}`}
                   </button>
                 </>
-              )
-            ) : (
-              <button type="button" className="wallet-connect-btn" onClick={connectWallet} disabled={isConnecting}>
-                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
-              </button>
-            )}
-          </nav>
-        </div>
-      </header>
+              ) : (
+                <button type="button" className="wallet-connect-btn" onClick={connectWallet} disabled={isConnecting}>
+                  {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+                </button>
+              )}
+            </nav>
+          </div>
+        </header>
+      )}
 
-      <main className="dashboard-content">
+      <main className={isConnected && activeRoute === 'tokens' ? 'max-w-7xl mx-auto px-6 py-8' : 'dashboard-content'}>
         {isConnected ? (
           activeRoute === 'tokens' ? (
             tokensRouteView
