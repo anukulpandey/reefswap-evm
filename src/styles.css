@@ -451,8 +451,7 @@ body {
   margin-bottom: 12px;
 }
 
-.activity-head h3,
-.info-card h3 {
+.activity-head h3 {
   margin: 0;
   font-size: 2rem;
 }
@@ -560,7 +559,7 @@ body {
   color: #b08ac8;
 }
 
-.info-card ul {
+.connection-modal-content ul {
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
@@ -568,17 +567,17 @@ body {
   gap: 10px;
 }
 
-.info-card li {
+.connection-modal-content li {
   display: grid;
   gap: 4px;
 }
 
-.info-card span {
+.connection-modal-content span {
   color: #857c99;
   font-size: 0.75rem;
 }
 
-.info-card code {
+.connection-modal-content code {
   display: inline-block;
   word-break: break-all;
   border-radius: 10px;
@@ -613,10 +612,33 @@ body {
   margin-bottom: 12px;
 }
 
+.modal-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .modal-head h2 {
   margin: 0;
   font-size: 3rem;
   line-height: 1;
+}
+
+.swap-info-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid #d8cbea;
+  background: #f8f3ff;
+  color: #6c5a8b;
+  font-size: 1.15rem;
+  font-weight: 800;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.swap-info-btn:hover {
+  background: #f2e9ff;
 }
 
 .close-btn {

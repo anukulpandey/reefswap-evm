@@ -146,6 +146,7 @@ const App = () => {
   const [creatorMintable, setCreatorMintable] = useState(true);
   const [creatorIcon, setCreatorIcon] = useState('');
   const [creatorConfirmOpen, setCreatorConfirmOpen] = useState(false);
+  const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
   const [creatorStatus, setCreatorStatus] = useState('');
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
@@ -841,37 +842,24 @@ const App = () => {
     </section>
   );
 
-  const connectionCardView = (
-    <section className="panel-card info-card">
-      <h3>Connection</h3>
-      <ul>
-        <li>
-          <span>RPC</span>
-          <code>{reefChain.rpcUrls.default.http[0]}</code>
-        </li>
-        <li>
-          <span>Router WETH()</span>
-          <code>{routerWrappedTokenSource === 'loading' ? 'Checking...' : routerWrappedToken}</code>
-        </li>
-        <li>
-          <span>Router02</span>
-          <code>{contracts.router}</code>
-        </li>
-      </ul>
-      {routerWrappedTokenSource === 'fallback' ? (
-        <p className="note">Router `WETH()` call failed on this RPC; using configured WrappedREEF fallback.</p>
-      ) : null}
-    </section>
-  );
-
   const swapStageView = (
     <section className="swap-stage">
       <article className="swap-modal swap-modal--pro">
         <div className="modal-head">
           <h2>Swap</h2>
-          <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
-            ×
-          </button>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="swap-info-btn"
+              onClick={() => setConnectionInfoOpen(true)}
+              aria-label="Open connection details"
+            >
+              i
+            </button>
+            <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="swap-box">
@@ -1059,13 +1047,40 @@ const App = () => {
   );
 
   const swapRouteView = (
-    <section className="dashboard-grid dashboard-grid--swap-route">
-      {swapStageView}
-      <aside className="activity-panel">
-        {connectionCardView}
-        {activityCardView}
-      </aside>
-    </section>
+    <>
+      <section className="dashboard-grid dashboard-grid--swap-route">
+        {swapStageView}
+        <aside className="activity-panel">
+          {activityCardView}
+        </aside>
+      </section>
+      <Uik.Modal
+        className="connection-modal"
+        title="Connection"
+        isOpen={connectionInfoOpen}
+        onClose={() => setConnectionInfoOpen(false)}
+      >
+        <div className="connection-modal-content">
+          <ul>
+            <li>
+              <span>RPC</span>
+              <code>{reefChain.rpcUrls.default.http[0]}</code>
+            </li>
+            <li>
+              <span>Router WETH()</span>
+              <code>{routerWrappedTokenSource === 'loading' ? 'Checking...' : routerWrappedToken}</code>
+            </li>
+            <li>
+              <span>Router02</span>
+              <code>{contracts.router}</code>
+            </li>
+          </ul>
+          {routerWrappedTokenSource === 'fallback' ? (
+            <p className="note">Router `WETH()` call failed on this RPC; using configured WrappedREEF fallback.</p>
+          ) : null}
+        </div>
+      </Uik.Modal>
+    </>
   );
 
   const creatorRouteView = (
