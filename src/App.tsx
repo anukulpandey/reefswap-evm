@@ -767,95 +767,115 @@ const App = () => {
   );
 
   const swapStageView = (
-    <div className="flex justify-center py-8 px-4">
-      <div style={{ width: '100%', maxWidth: 520 }}>
-        <Uik.Card>
-          {/* Header */}
-          <div className="flex items-center justify-between mb-5">
-            <Uik.Text type="headline">Trade</Uik.Text>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setConnectionInfoOpen(true)}
-                aria-label="Connection info"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'var(--text-light)',
-                  fontSize: 18,
-                  lineHeight: 1,
-                  padding: '2px 6px',
-                  borderRadius: 6,
-                }}
-              >
-                ⚙
-              </button>
-              <button
-                type="button"
-                onClick={() => setAmountInText('')}
-                aria-label="Reset"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'var(--text-light)',
-                  fontSize: 20,
-                  lineHeight: 1,
-                  padding: '2px 6px',
-                  borderRadius: 6,
-                }}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-
-          {/* From token box */}
-          <div
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(242, 240, 248, 0.85)',
+        backdropFilter: 'blur(8px)',
+        paddingTop: 80,
+        paddingBottom: 24,
+        paddingLeft: 16,
+        paddingRight: 16,
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 560,
+          backgroundColor: 'hsl(var(--bg--h, 252), var(--bg--s, 35%), 97%)',
+          borderRadius: 24,
+          padding: '28px 24px 24px',
+          boxShadow: '0 8px 48px rgba(93, 59, 173, 0.18)',
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', margin: 0 }}>Swap</h2>
+          <button
+            type="button"
+            onClick={() => navigateRoute('tokens')}
             style={{
-              background: 'var(--neomorph-in, #e8e3f4)',
-              borderRadius: 16,
-              padding: '14px 16px',
-              marginBottom: 8,
+              width: 36, height: 36, borderRadius: '50%',
+              background: 'hsl(var(--bg--h, 252), var(--bg--s, 25%), 92%)',
+              border: 'none', cursor: 'pointer', fontSize: 22,
+              color: 'var(--text)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              lineHeight: 1,
             }}
           >
-            <div className="flex items-center justify-between mb-2">
-              <span style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>From</span>
-              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>
-                Balance: <strong style={{ color: 'var(--text)' }}>{formattedBalanceIn} {tokenIn.symbol}</strong>
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div style={{ flexShrink: 0 }}>
-                <TokenSelect label="" value={tokenIn} options={tokens} onChange={setTokenIn} />
-              </div>
-              <input
-                value={amountInText}
-                onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
-                inputMode="decimal"
-                placeholder="0.0"
-                style={{
-                  flex: 1,
-                  background: 'none',
-                  border: 'none',
-                  outline: 'none',
-                  fontSize: 26,
-                  fontWeight: 700,
-                  color: 'var(--text)',
-                  textAlign: 'right',
-                  minWidth: 0,
+            ×
+          </button>
+        </div>
+
+        {/* FROM token row */}
+        <div
+          style={{
+            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
+            borderRadius: 16, padding: '16px 20px', marginBottom: 4,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
+              {tokenIn.isNative ? (
+                <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #a93185, #5d3bad)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Uik.ReefSign style={{ width: 26, height: 26 }} />
+                </div>
+              ) : (
+                <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #7a3bbd, #5d3bad)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 18 }}>
+                  {tokenIn.symbol.charAt(0)}
+                </div>
+              )}
+              <select
+                value={tokenIn.isNative ? 'native' : tokenIn.address || ''}
+                onChange={(e) => {
+                  const tok = tokens.find((t) => (t.isNative ? 'native' : t.address || '') === e.target.value);
+                  if (tok) setTokenIn(tok);
                 }}
-              />
+                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', borderRadius: '50%', width: '100%', height: '100%' }}
+              >
+                {tokens.map((t) => {
+                  const k = t.isNative ? 'native' : t.address || '';
+                  return <option key={k} value={k}>{t.symbol}</option>;
+                })}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)', lineHeight: 1.2 }}>{tokenIn.symbol}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceIn} {tokenIn.symbol}</div>
             </div>
           </div>
+          <input
+            value={amountInText}
+            onChange={(e) => setAmountInText(normalizeInput(e.target.value))}
+            inputMode="decimal"
+            placeholder="0.0"
+            style={{ background: 'none', border: 'none', outline: 'none', fontSize: 24, fontWeight: 600, color: 'var(--text-light)', textAlign: 'right', width: 130, minWidth: 0 }}
+          />
+        </div>
 
-          {/* Amount slider */}
-          <div style={{ padding: '10px 4px 4px' }}>
-            <div className="flex items-center justify-between mb-1">
-              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Amount</span>
-              <strong style={{ fontSize: 12, color: 'var(--text)' }}>{amountSliderValue}%</strong>
-            </div>
+        {/* Switch button + Amount slider row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0' }}>
+          <button
+            type="button"
+            onClick={onSwitchTokens}
+            aria-label="Switch tokens"
+            style={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, #a93185, #5d3bad)',
+              border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontSize: 20, boxShadow: '0 2px 10px rgba(93, 59, 173, 0.4)',
+            }}
+          >
+            ⇄
+          </button>
+          <div style={{ flex: 1 }}>
             <Uik.Slider
               value={amountSliderValue}
               steps={25}
@@ -863,249 +883,89 @@ const App = () => {
               tooltip={`${amountSliderValue}%`}
               onChange={(position: number) => setAmountByPercent(position)}
             />
-            <div className="flex gap-2 mt-2">
-              {AMOUNT_PRESETS.map((percent) => (
-                <button
-                  key={percent}
-                  type="button"
-                  onClick={() => setAmountByPercent(percent)}
-                  style={{
-                    flex: 1,
-                    padding: '4px 0',
-                    borderRadius: 8,
-                    border: '1px solid var(--border-color-dark, #c9c3de)',
-                    background: amountSliderValue === percent ? 'var(--primary)' : 'transparent',
-                    color: amountSliderValue === percent ? '#fff' : 'var(--text-light)',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {percent}%
-                </button>
-              ))}
-            </div>
           </div>
+        </div>
 
-          {/* Switch button */}
-          <div className="flex justify-center my-3">
-            <button
-              type="button"
-              onClick={onSwitchTokens}
-              aria-label="Switch tokens"
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: '50%',
-                border: '2px solid var(--border-color-dark, #c9c3de)',
-                background: 'var(--neomorph-in, #e8e3f4)',
-                color: 'var(--text)',
-                fontSize: 18,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'transform 0.2s',
-              }}
-            >
-              ↕
-            </button>
-          </div>
-
-          {/* To token box */}
-          <div
-            style={{
-              background: 'var(--neomorph-in, #e8e3f4)',
-              borderRadius: 16,
-              padding: '14px 16px',
-              marginBottom: 12,
-            }}
-          >
-            <div className="flex items-center justify-between mb-2">
-              <span style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</span>
-              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>
-                Balance: <strong style={{ color: 'var(--text)' }}>{formattedBalanceOut} {tokenOut.symbol}</strong>
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div style={{ flexShrink: 0 }}>
-                <TokenSelect label="" value={tokenOut} options={tokens} onChange={setTokenOut} />
+        {/* TO token row */}
+        <div
+          style={{
+            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
+            borderRadius: 16, padding: '16px 20px', marginBottom: 14,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
+              <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'hsl(var(--bg--h, 252), var(--bg--s, 20%), 87%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-light)', fontWeight: 700, fontSize: 18 }}>
+                {tokenOut.isNative ? <Uik.ReefSign style={{ width: 24, height: 24, opacity: 0.4 }} /> : tokenOut.symbol.charAt(0)}
               </div>
-              <input
-                value={amountOutText}
-                readOnly
-                placeholder="0.0"
-                style={{
-                  flex: 1,
-                  background: 'none',
-                  border: 'none',
-                  outline: 'none',
-                  fontSize: 26,
-                  fontWeight: 700,
-                  color: 'var(--text)',
-                  textAlign: 'right',
-                  minWidth: 0,
-                  opacity: 0.7,
+              <select
+                value={tokenOut.isNative ? 'native' : tokenOut.address || ''}
+                onChange={(e) => {
+                  const tok = tokens.find((t) => (t.isNative ? 'native' : t.address || '') === e.target.value);
+                  if (tok) setTokenOut(tok);
                 }}
-              />
+                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', borderRadius: '50%', width: '100%', height: '100%' }}
+              >
+                {tokens.map((t) => {
+                  const k = t.isNative ? 'native' : t.address || '';
+                  return <option key={k} value={k}>{t.symbol}</option>;
+                })}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--text)', lineHeight: 1.2 }}>{tokenOut.symbol}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceOut} {tokenOut.symbol}</div>
             </div>
           </div>
+          <input
+            value={amountOutText}
+            readOnly
+            placeholder="0.0"
+            style={{ background: 'none', border: 'none', outline: 'none', fontSize: 24, fontWeight: 600, color: 'var(--text-light)', textAlign: 'right', width: 130, minWidth: 0 }}
+          />
+        </div>
 
-          {/* Rate / fee / slippage info */}
-          <div
-            style={{
-              background: 'var(--neomorph-in, #e8e3f4)',
-              borderRadius: 12,
-              padding: '10px 14px',
-              marginBottom: 12,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 6,
-            }}
-          >
-            {[
-              { label: 'Rate', value: detailsRate },
-              { label: 'Fee', value: isWrapPair ? '0%' : '0.30%' },
-              { label: 'Slippage', value: `${clampedSlippage.toFixed(1)}%` },
-              { label: 'Min. received', value: minOut > 0n ? `${formatDisplayAmount(minOut, tokenOut.decimals, 6)} ${tokenOut.symbol}` : '-' },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center justify-between">
-                <span style={{ fontSize: 12, color: 'var(--text-light)' }}>{item.label}</span>
-                <strong style={{ fontSize: 12, color: 'var(--text)' }}>{item.value}</strong>
-              </div>
-            ))}
+        {/* Rate / Fee / Slippage info card */}
+        <div
+          style={{
+            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
+            borderRadius: 14, padding: '14px 20px', marginBottom: 14,
+          }}
+        >
+          <div style={{ fontSize: 14, color: 'var(--text-light)', marginBottom: 8 }}>Rate</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <span style={{ fontSize: 14, color: 'var(--text-light)' }}>Fee</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{isWrapPair ? '0 $' : '0.30%'}</span>
           </div>
-
-          {/* Slippage control */}
-          <div style={{ marginBottom: 14 }}>
-            <div className="flex items-center justify-between mb-1">
-              <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Slippage tolerance</span>
-              <div className="flex items-center gap-2">
-                <input
-                  value={slippageText}
-                  onChange={(event) => setSlippageText(normalizeInput(event.target.value))}
-                  inputMode="decimal"
-                  style={{
-                    width: 50,
-                    textAlign: 'right',
-                    background: 'var(--neomorph-in, #e8e3f4)',
-                    border: '1px solid var(--border-color-dark, #c9c3de)',
-                    borderRadius: 6,
-                    padding: '2px 6px',
-                    fontSize: 12,
-                    color: 'var(--text)',
-                    outline: 'none',
-                  }}
-                />
-                <strong style={{ fontSize: 12, color: 'var(--text)' }}>{clampedSlippage.toFixed(1)}%</strong>
-              </div>
-            </div>
-            <Uik.Slider
-              value={slippageSliderValue}
-              steps={1}
-              helpers={SLIPPAGE_SLIDER_HELPERS}
-              tooltip={`${clampedSlippage.toFixed(1)}%`}
-              onChange={setSlippageFromSlider}
-            />
-            <div className="flex gap-2 mt-2">
-              {SLIPPAGE_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  onClick={() => setSlippagePreset(preset)}
-                  style={{
-                    flex: 1,
-                    padding: '4px 0',
-                    borderRadius: 8,
-                    border: '1px solid var(--border-color-dark, #c9c3de)',
-                    background: slippageText === preset ? 'var(--primary)' : 'transparent',
-                    color: slippageText === preset ? '#fff' : 'var(--text-light)',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {preset}%
-                </button>
-              ))}
-            </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14, color: 'var(--text-light)' }}>Slippage</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{clampedSlippage.toFixed(1)}%</span>
           </div>
+        </div>
 
-          {/* Import token */}
-          <div className="flex gap-2 mb-3">
-            <input
-              placeholder="Import token by contract address"
-              value={importAddress}
-              onChange={(event) => setImportAddress(event.target.value)}
-              style={{
-                flex: 1,
-                background: 'var(--neomorph-in, #e8e3f4)',
-                border: '1px solid var(--border-color-dark, #c9c3de)',
-                borderRadius: 10,
-                padding: '8px 12px',
-                fontSize: 13,
-                color: 'var(--text)',
-                outline: 'none',
-              }}
-            />
-            <button
-              type="button"
-              onClick={importToken}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 10,
-                border: '1px solid var(--border-color-dark, #c9c3de)',
-                background: 'transparent',
-                color: 'var(--text)',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Import
-            </button>
-          </div>
+        {/* Slippage slider */}
+        <div style={{ marginBottom: 20 }}>
+          <Uik.Slider
+            value={slippageSliderValue}
+            steps={1}
+            helpers={SLIPPAGE_SLIDER_HELPERS}
+            tooltip={`${clampedSlippage.toFixed(1)}%`}
+            onChange={setSlippageFromSlider}
+          />
+        </div>
 
-          {importError ? (
-            <p style={{ color: 'var(--danger)', fontSize: 12, marginBottom: 8 }}>{importError}</p>
-          ) : null}
+        {/* Action button */}
+        {isWrongChain ? (
+          <Uik.Button text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'} fill size="large" disabled={isSwitching} onClick={switchToReef} />
+        ) : requiresApproval ? (
+          <Uik.Button text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
+        ) : (
+          <Uik.Button text={swapButtonLabel} fill={canSwap} size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
+        )}
 
-          {/* Action button */}
-          {isWrongChain ? (
-            <Uik.Button
-              text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
-              fill
-              size="large"
-              disabled={isSwitching}
-              onClick={switchToReef}
-            />
-          ) : requiresApproval ? (
-            <Uik.Button
-              text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
-              fill
-              size="large"
-              disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}
-              onClick={approve}
-            />
-          ) : (
-            <Uik.Button
-              text={swapButtonLabel}
-              fill
-              size="large"
-              disabled={!canSwap || isSwapping || isRefreshing}
-              onClick={swap}
-            />
-          )}
-
-          {statusMessage ? (
-            <p style={{ color: 'var(--success)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{statusMessage}</p>
-          ) : null}
-          {actionError ? (
-            <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{actionError}</p>
-          ) : null}
-        </Uik.Card>
+        {statusMessage ? <p style={{ color: 'var(--success)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{statusMessage}</p> : null}
+        {actionError ? <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{actionError}</p> : null}
       </div>
     </div>
   );
@@ -1114,6 +974,9 @@ const App = () => {
 
   const swapRouteView = (
     <>
+      <div style={{ pointerEvents: 'none', userSelect: 'none', opacity: 0.45, filter: 'blur(2px)' }}>
+        <TokensView />
+      </div>
       {swapStageView}
       <Uik.Modal
         className="connection-modal"

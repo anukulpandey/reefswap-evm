@@ -38,7 +38,7 @@ const AppHeader = ({ activeRoute, onNavigate }: AppHeaderProps) => {
 
   return (
     <>
-      <header className="flex items-center justify-between px-6 py-3 bg-[#f2f0f8] border-b border-border">
+      <header className="flex items-center justify-between px-6 py-3 bg-[#f2f0f8] border-b border-border relative z-50">
         {/* Left side - Logo and Nav */}
         <div className="flex items-center gap-8">
           <button

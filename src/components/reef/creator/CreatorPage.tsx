@@ -39,7 +39,7 @@ const CreatorPage = (): JSX.Element => {
           <Uik.Container flow="spaceBetween">
             <Uik.Container vertical flow="start">
               <Uik.Text type="headline">Create your token</Uik.Text>
-              <Uik.Text type="lead">Create a Reef token draft with the same Creator UX from reef-app.</Uik.Text>
+              <Uik.Text type="lead">Use Reef chain to create your own token.</Uik.Text>
             </Uik.Container>
             <IconUpload value={icon} onChange={setIcon} />
           </Uik.Container>
@@ -48,7 +48,7 @@ const CreatorPage = (): JSX.Element => {
             <Uik.Container className="creator__form-main">
               <Uik.Input
                 label="Token name"
-                placeholder="MyToken"
+                placeholder="My Token"
                 value={tokenName}
                 maxLength={42}
                 onInput={(e) => setTokenName((e.target as HTMLInputElement).value)}
@@ -56,7 +56,7 @@ const CreatorPage = (): JSX.Element => {
               <Uik.Input
                 className="creator__token-symbol-input"
                 label="Token symbol"
-                placeholder="MTK"
+                placeholder="MYTKN"
                 value={symbol}
                 maxLength={42}
                 onInput={(e) => setSymbol((e.target as HTMLInputElement).value)}
@@ -91,7 +91,7 @@ const CreatorPage = (): JSX.Element => {
         </div>
 
         <div className="creator__preview">
-          <Uik.Text type="lead" className="creator__preview-title">Token preview</Uik.Text>
+          <Uik.Text type="lead" className="creator__preview-title">Token Preview</Uik.Text>
 
           <div className="creator__preview-token">
             <div className="creator__preview-token-image">
@@ -115,10 +115,10 @@ const CreatorPage = (): JSX.Element => {
               {burnable
                 ? <CheckCircle2 className="creator-check-icon" />
                 : <XCircle className="creator-check-icon danger" />}
-              <Uik.Text>{!burnable && 'Not '}Burnable</Uik.Text>
+              <Uik.Text className="creator__preview-info-title">{!burnable && 'Not '}Burnable</Uik.Text>
             </Uik.Container>
             <Uik.Text type="mini">
-              Existing tokens {burnable ? 'can' : 'cannot'} be destroyed
+              Existing tokens {burnable ? 'can be destroyed to decrease' : 'cannot be destroyed to decrease'} the total supply.
             </Uik.Text>
           </div>
 
@@ -127,16 +127,16 @@ const CreatorPage = (): JSX.Element => {
               {mintable
                 ? <CheckCircle2 className="creator-check-icon" />
                 : <XCircle className="creator-check-icon danger" />}
-              <Uik.Text>{!mintable && 'Not '}Mintable</Uik.Text>
+              <Uik.Text className="creator__preview-info-title">{!mintable && 'Not '}Mintable</Uik.Text>
             </Uik.Container>
             <Uik.Text type="mini">
-              New tokens {mintable ? 'can' : 'cannot'} be created later
+              New tokens {mintable ? 'can be created and added to' : 'cannot be created and added to'} the total supply.
             </Uik.Text>
           </div>
 
           <Uik.Button
             disabled={!!validationMsg}
-            text="Create token"
+            text="Create Token"
             fill={!validationMsg}
             size="large"
             onClick={() => setConfirmOpen(true)}
