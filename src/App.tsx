@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import {
   useAccount,
@@ -12,7 +12,7 @@ import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'vi
 import { erc20Abi, reefswapFactoryAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
-import { defaultTokens, nativeReef, tokenKey, type TokenOption } from './lib/tokens';
+import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from './lib/utils';
 
 const MAX_APPROVAL = (2n ** 256n) - 1n;
@@ -20,17 +20,56 @@ const DEFAULT_SLIPPAGE = '1.0';
 const TX_DEADLINE_SECONDS = 60 * 20;
 const AMOUNT_PRESETS = [0, 25, 50, 100] as const;
 const SLIPPAGE_PRESETS = ['0.3', '0.8', '1.0', '2.0'] as const;
-type AppRoute = 'tokens' | 'swap' | 'pools' | 'creator';
+const REEF_USD_PRICE = 0.000073;
+const AMOUNT_SLIDER_HELPERS = [
+  { position: 0, text: '0%' },
+  { position: 25, text: '25%' },
+  { position: 50, text: '50%' },
+  { position: 100, text: '100%' },
+];
+const SLIPPAGE_SLIDER_HELPERS = [
+  { position: 0, text: '0%' },
+  { position: 50, text: '10%' },
+  { position: 100, text: '20%' },
+];
+
+type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token';
 
 const isWrapPairSelection = (a: TokenOption, b: TokenOption): boolean =>
   (a.isNative && b.address === contracts.wrappedReef) || (b.isNative && a.address === contracts.wrappedReef);
 
-const NAV_ROUTES: AppRoute[] = ['tokens', 'swap', 'pools', 'creator'];
+const NAV_ROUTES: { route: AppRoute; label: string; path: string }[] = [
+  { route: 'tokens', label: 'Tokens', path: '/' },
+  { route: 'swap', label: 'Swap', path: '/swap' },
+  { route: 'pools', label: 'Pools', path: '/pools' },
+  { route: 'create-token', label: 'Creator', path: '/create-token' },
+];
+
+const ROUTE_ALIAS: Record<string, AppRoute> = {
+  '': 'tokens',
+  tokens: 'tokens',
+  dashboard: 'tokens',
+  swap: 'swap',
+  pools: 'pools',
+  creator: 'create-token',
+  'create-token': 'create-token',
+};
+
+const normalizeRouteSegment = (value: string | null | undefined): string =>
+  (value || '').replace(/^#\/?/, '').replace(/^\/+/, '').split('/')[0].trim().toLowerCase();
 
 const resolveRoute = (value: string | null | undefined): AppRoute => {
-  if (!value) return 'tokens';
-  return NAV_ROUTES.includes(value as AppRoute) ? (value as AppRoute) : 'tokens';
+  const segment = normalizeRouteSegment(value);
+  return ROUTE_ALIAS[segment] || 'tokens';
 };
+
+const resolveRouteFromLocation = (location: Pick<Location, 'pathname' | 'hash'>): AppRoute => {
+  const hashSegment = normalizeRouteSegment(location.hash);
+  if (hashSegment) return resolveRoute(hashSegment);
+  return resolveRoute(location.pathname);
+};
+
+const routePath = (route: AppRoute): string => NAV_ROUTES.find((item) => item.route === route)?.path || '/';
 
 const trimDecimalString = (value: string): string => {
   if (!value.includes('.')) return value;
@@ -97,10 +136,16 @@ const App = () => {
   const [assetTab, setAssetTab] = useState<'tokens' | 'nfts'>('tokens');
   const [activeRoute, setActiveRoute] = useState<AppRoute>(() => {
     if (typeof window === 'undefined') return 'tokens';
-    const fromHash = window.location.hash.replace(/^#\/?/, '').split('/')[0];
-    const fromPath = window.location.pathname.replace(/^\/+/, '').split('/')[0];
-    return resolveRoute(fromHash || fromPath);
+    return resolveRouteFromLocation(window.location);
   });
+  const [creatorTokenName, setCreatorTokenName] = useState('');
+  const [creatorSymbol, setCreatorSymbol] = useState('');
+  const [creatorSupply, setCreatorSupply] = useState('');
+  const [creatorBurnable, setCreatorBurnable] = useState(true);
+  const [creatorMintable, setCreatorMintable] = useState(true);
+  const [creatorIcon, setCreatorIcon] = useState('');
+  const [creatorConfirmOpen, setCreatorConfirmOpen] = useState(false);
+  const [creatorStatus, setCreatorStatus] = useState('');
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
@@ -321,20 +366,22 @@ const App = () => {
 
   useEffect(() => {
     const syncFromLocation = () => {
-      const fromHash = window.location.hash.replace(/^#\/?/, '').split('/')[0];
-      const fromPath = window.location.pathname.replace(/^\/+/, '').split('/')[0];
-      setActiveRoute(resolveRoute(fromHash || fromPath));
+      setActiveRoute(resolveRouteFromLocation(window.location));
     };
 
+    window.addEventListener('popstate', syncFromLocation);
     window.addEventListener('hashchange', syncFromLocation);
-    return () => window.removeEventListener('hashchange', syncFromLocation);
+    return () => {
+      window.removeEventListener('popstate', syncFromLocation);
+      window.removeEventListener('hashchange', syncFromLocation);
+    };
   }, []);
 
   const navigateRoute = (route: AppRoute) => {
+    const nextPath = routePath(route);
     setActiveRoute(route);
-    const nextHash = `#/${route}`;
-    if (window.location.hash !== nextHash) {
-      window.history.replaceState(null, '', nextHash);
+    if (window.location.pathname !== nextPath || window.location.hash) {
+      window.history.pushState(null, '', nextPath);
     }
   };
 
@@ -569,6 +616,28 @@ const App = () => {
     setSlippageText(value);
   };
 
+  const setSlippageFromSlider = (position: number) => {
+    const percentage = Math.max(0, Math.min(20, position / 5));
+    setSlippageText(trimDecimalString(percentage.toFixed(1)));
+  };
+
+  const handleCreatorIconUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === 'string' ? reader.result : '';
+      setCreatorIcon(value);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const confirmCreatorDraft = () => {
+    setCreatorConfirmOpen(false);
+    setCreatorStatus('Token draft confirmed. Wire this form to your deploy script to publish on-chain.');
+  };
+
   const canSwap =
     isConnected &&
     !isWrongChain &&
@@ -584,18 +653,51 @@ const App = () => {
   const detailsRate = isWrapPair
     ? `1 ${tokenIn.symbol} = 1 ${tokenOut.symbol}`
     : routeLabel || '-';
-  const formattedWalletReefBalance = formatDisplayAmount(walletNativeBalance, nativeReef.decimals, 3);
+  const walletReefBalanceNumber = Number(formatUnits(walletNativeBalance, nativeReef.decimals));
+  const formattedWalletReefBalance = formatDisplayAmount(walletNativeBalance, nativeReef.decimals, 2);
   const formattedWalletReefUsd = new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(formatUnits(walletNativeBalance, nativeReef.decimals)) * 0.0001);
-  const dashboardTokens = useMemo(() => {
-    const reef = tokens.find((token) => token.symbol === 'REEF');
-    const wreef = tokens.find((token) => token.symbol === 'WREEF');
-    return [reef, wreef].filter((token): token is TokenOption => !!token);
-  }, [tokens]);
+  }).format(walletReefBalanceNumber * REEF_USD_PRICE);
+  const formattedReefUsdPrice = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 6,
+    maximumFractionDigits: 6,
+  }).format(REEF_USD_PRICE);
+  const formattedReefTokenAmount = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(walletReefBalanceNumber);
+  const formattedReefTokenUsdValue = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(walletReefBalanceNumber * REEF_USD_PRICE);
+  const amountSliderValue = useMemo(() => {
+    if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
+    const percent = Number((parsedAmountIn * 10_000n) / balanceIn) / 100;
+    return Math.max(0, Math.min(100, Math.round(percent)));
+  }, [balanceIn, parsedAmountIn]);
+  const slippageSliderValue = useMemo(() => {
+    const mapped = Math.round(clampedSlippage * 5);
+    return Math.max(0, Math.min(100, mapped));
+  }, [clampedSlippage]);
+  const creatorValidationMsg = useMemo(() => {
+    if (!creatorTokenName.trim()) return 'Set token name';
+    if (!creatorSymbol.trim()) return 'Set token symbol';
+    if (!creatorSupply.trim()) return 'Set initial supply';
+    const parsedSupply = Number(creatorSupply);
+    if (!Number.isInteger(parsedSupply) || parsedSupply <= 0) {
+      return 'Initial supply must be a positive whole number';
+    }
+    return '';
+  }, [creatorSupply, creatorSymbol, creatorTokenName]);
+  const creatorSymbolUpper = creatorSymbol.trim().toUpperCase();
+  const creatorSupplyFormatted = creatorSupply ? Uik.utils.formatHumanAmount(creatorSupply) : '0';
   const swapButtonLabel = isSwapping
     ? isWrapPair
       ? tokenIn.isNative
@@ -610,7 +712,23 @@ const App = () => {
           : 'Unwrap Now'
         : 'Swap Now';
 
-  const assetPanelView = (
+  const activityRows = useMemo(() => {
+    const rows = [
+      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:49 PM', amount: '-342.00' },
+      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:47 PM', amount: '-43.00' },
+      { title: 'Sent REEF', time: 'Mar 2, 2026 · 10:45 PM', amount: '-1.00' },
+    ];
+    if (lastTxHash) {
+      rows.unshift({
+        title: 'Latest Tx',
+        time: `Hash ${shortAddress(lastTxHash)}`,
+        amount: '-',
+      });
+    }
+    return rows;
+  }, [lastTxHash]);
+
+  const homeAssetPanelView = (
     <aside className="asset-panel panel-card">
       <div className="asset-tabs">
         <button
@@ -630,33 +748,32 @@ const App = () => {
       </div>
 
       {assetTab === 'tokens' ? (
-        <ul className="token-list">
-          {dashboardTokens.map((token) => {
-            const key = tokenKey(token);
-            const inSelected = key === tokenKey(tokenIn);
-            const outSelected = key === tokenKey(tokenOut);
-            const tokenBalance = inSelected
-              ? balanceIn
-              : outSelected
-                ? balanceOut
-                : 0n;
-
-            return (
-              <li key={`left-${key}`} className="token-row">
-                <span className="token-badge">{token.symbol.slice(0, 1)}</span>
-                <div className="token-row__meta">
-                  <strong>{token.symbol}</strong>
-                  <small>{token.name}</small>
-                </div>
-                <div className="token-row__amount">
-                  <strong>{formatDisplayAmount(tokenBalance, token.decimals, 4)}</strong>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="token-list token-list--home">
+          <article className="token-row token-row--home">
+            <div className="token-row__left">
+              <div className="token-badge token-badge--reef">
+                <Uik.ReefIcon className="token-badge__icon" />
+              </div>
+              <div className="token-row__meta">
+                <strong>REEF</strong>
+                <small>{formattedReefUsdPrice}</small>
+              </div>
+            </div>
+            <div className="token-row__right">
+              <div className="token-row__amount">
+                <strong>{formattedReefTokenUsdValue}</strong>
+                <small>{formattedReefTokenAmount} REEF</small>
+              </div>
+              <button type="button" className="send-btn" onClick={() => navigateRoute('swap')}>
+                Send
+              </button>
+            </div>
+          </article>
+        </div>
       ) : (
-        <div className="nft-empty">Your wallet does not hold NFTs.</div>
+        <div className="nft-empty">
+          <p>Your wallet doesn't own any NFTs.</p>
+        </div>
       )}
     </aside>
   );
@@ -669,26 +786,27 @@ const App = () => {
           Open Explorer
         </a>
       </div>
-      <ul className="activity-list">
-        <li>
-          <strong>Sent REEF</strong>
-          <span>-11</span>
-        </li>
-        <li>
-          <strong>Received PRLS</strong>
-          <span>+9.2449</span>
-        </li>
-        <li>
-          <strong>Sent REEF</strong>
-          <span>-2000</span>
-        </li>
-        {lastTxHash ? (
-          <li>
-            <strong>Latest Tx</strong>
-            <span>{shortAddress(lastTxHash)}</span>
-          </li>
-        ) : null}
-      </ul>
+      <div className="activity-list">
+        {activityRows.map((row) => (
+          <a
+            key={`${row.title}-${row.time}`}
+            className="activity-item"
+            href={lastTxHash ? `${reefChain.blockExplorers.default.url}/tx/${lastTxHash}` : reefChain.blockExplorers.default.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <div className="activity-item__icon">↗</div>
+            <div className="activity-item__meta">
+              <strong>{row.title}</strong>
+              <span>{row.time}</span>
+            </div>
+            <div className="activity-item__amount">
+              {row.amount}
+              <Uik.ReefIcon className="activity-item__amount-icon" />
+            </div>
+          </a>
+        ))}
+      </div>
     </section>
   );
 
@@ -717,7 +835,7 @@ const App = () => {
 
   const swapStageView = (
     <section className="swap-stage">
-      <article className="swap-modal">
+      <article className="swap-modal swap-modal--pro">
         <div className="modal-head">
           <h2>Swap</h2>
           <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
@@ -740,10 +858,18 @@ const App = () => {
             </label>
           </div>
 
-          <div className="amount-controls">
-            <button type="button" className="icon-switch" onClick={onSwitchTokens} aria-label="Switch tokens">
-              ↕
-            </button>
+          <div className="swap-slider-group">
+            <div className="swap-slider-group__head">
+              <span>Amount preset</span>
+              <strong>{amountSliderValue}%</strong>
+            </div>
+            <Uik.Slider
+              value={amountSliderValue}
+              steps={25}
+              helpers={AMOUNT_SLIDER_HELPERS}
+              tooltip={`${amountSliderValue}%`}
+              onChange={(position: number) => setAmountByPercent(position)}
+            />
             <div className="preset-strip">
               {AMOUNT_PRESETS.map((percent) => (
                 <button
@@ -756,6 +882,12 @@ const App = () => {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="amount-controls">
+            <button type="button" className="icon-switch" onClick={onSwitchTokens} aria-label="Switch tokens">
+              ↕
+            </button>
           </div>
 
           <div className="field-grid">
@@ -789,7 +921,7 @@ const App = () => {
           <div className="slippage-block">
             <div className="slippage-row">
               <label>
-                <span>Slippage (%)</span>
+                <span>Slippage tolerance</span>
                 <input
                   value={slippageText}
                   onChange={(event) => setSlippageText(normalizeInput(event.target.value))}
@@ -798,14 +930,12 @@ const App = () => {
               </label>
               <strong>{clampedSlippage.toFixed(1)}%</strong>
             </div>
-            <input
-              className="slippage-range"
-              type="range"
-              min="0"
-              max="20"
-              step="0.1"
-              value={clampedSlippage}
-              onChange={(event) => setSlippageText(event.target.value)}
+            <Uik.Slider
+              value={slippageSliderValue}
+              steps={1}
+              helpers={SLIPPAGE_SLIDER_HELPERS}
+              tooltip={`${clampedSlippage.toFixed(1)}%`}
+              onChange={setSlippageFromSlider}
             />
             <div className="preset-strip">
               {SLIPPAGE_PRESETS.map((preset) => (
@@ -849,31 +979,26 @@ const App = () => {
           </div>
 
           {isWrongChain ? (
-            <button type="button" onClick={switchToReef} disabled={isSwitching}>
+            <button type="button" className="swap-primary-btn" onClick={switchToReef} disabled={isSwitching}>
               {isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
             </button>
           ) : requiresApproval ? (
-            <button type="button" onClick={approve} disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}>
+            <button
+              type="button"
+              className="swap-primary-btn"
+              onClick={approve}
+              disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}
+            >
               {isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
             </button>
           ) : (
-            <button type="button" onClick={swap} disabled={!canSwap || isSwapping || isRefreshing}>
+            <button type="button" className="swap-primary-btn" onClick={swap} disabled={!canSwap || isSwapping || isRefreshing}>
               {swapButtonLabel}
             </button>
           )}
 
           {statusMessage ? <p className="status">{statusMessage}</p> : null}
           {actionError ? <p className="error">{actionError}</p> : null}
-          {lastTxHash ? (
-            <a
-              className="tx-link"
-              href={`${reefChain.blockExplorers.default.url}/tx/${lastTxHash}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View Transaction: {shortAddress(lastTxHash)}
-            </a>
-          ) : null}
         </div>
       </article>
     </section>
@@ -881,20 +1006,13 @@ const App = () => {
 
   const tokensRouteView = (
     <>
-      <section className="portfolio-row">
+      <section className="portfolio-row portfolio-row--home">
         <div className="portfolio-summary">
-          <p className="portfolio-label">Total</p>
-          <h2>{formattedWalletReefUsd}</h2>
-          <div className="portfolio-splits">
-            <div>
-              <span>Available</span>
-              <strong>{formattedWalletReefUsd}</strong>
-            </div>
-            <div>
-              <span>Staked</span>
-              <strong>$0.00</strong>
-            </div>
+          <div className="portfolio-label-wrap">
+            <p className="portfolio-label">Balance</p>
+            <span className="portfolio-eye">◌</span>
           </div>
+          <h2>{formattedWalletReefUsd}</h2>
         </div>
 
         <button type="button" className="buy-reef-btn">
@@ -905,31 +1023,161 @@ const App = () => {
       </section>
 
       <section className="dashboard-grid dashboard-grid--tokens">
-        {assetPanelView}
+        {homeAssetPanelView}
         <aside className="activity-panel">
           {activityCardView}
-          {connectionCardView}
         </aside>
       </section>
     </>
   );
 
   const swapRouteView = (
-    <section className="dashboard-grid dashboard-grid--swap">
-      {assetPanelView}
+    <section className="dashboard-grid dashboard-grid--swap-route">
       {swapStageView}
       <aside className="activity-panel">
-        {activityCardView}
         {connectionCardView}
+        {activityCardView}
       </aside>
     </section>
   );
 
-  const routePlaceholderTitle = activeRoute === 'pools' ? 'Pools' : 'Creator';
-  const routePlaceholderView = (
+  const creatorRouteView = (
+    <>
+      <section className="creator">
+        <div className="creator__form panel-card">
+          <div className="creator__header">
+            <h2>Create your token</h2>
+            <p>Create a Reef token draft with the same Creator UX from reef-app.</p>
+          </div>
+          <label className="creator-icon-upload">
+            <input type="file" accept="image/*" onChange={handleCreatorIconUpload} />
+            {creatorIcon ? <img src={creatorIcon} alt="Token icon" /> : <span>Upload icon</span>}
+          </label>
+
+          <Uik.Form>
+            <div className="creator__form-main">
+              <Uik.Input
+                label="Token name"
+                placeholder="MyToken"
+                value={creatorTokenName}
+                maxLength={42}
+                onInput={(event) => setCreatorTokenName((event.target as HTMLInputElement).value)}
+              />
+
+              <Uik.Input
+                className="creator__token-symbol-input"
+                label="Token symbol"
+                placeholder="MTK"
+                value={creatorSymbol}
+                maxLength={12}
+                onInput={(event) => setCreatorSymbol((event.target as HTMLInputElement).value)}
+              />
+            </div>
+
+            <Uik.Input
+              label="Initial supply"
+              placeholder="0"
+              value={creatorSupply}
+              min={1}
+              onInput={(event) => setCreatorSupply((event.target as HTMLInputElement).value.replace(/[^0-9]/g, ''))}
+            />
+
+            <div className="creator__form-bottom">
+              <Uik.Toggle
+                label="Burnable"
+                onText="Yes"
+                offText="No"
+                value={creatorBurnable}
+                onChange={() => setCreatorBurnable((current) => !current)}
+              />
+              <Uik.Toggle
+                label="Mintable"
+                onText="Yes"
+                offText="No"
+                value={creatorMintable}
+                onChange={() => setCreatorMintable((current) => !current)}
+              />
+            </div>
+          </Uik.Form>
+        </div>
+
+        <div className="creator__preview panel-card">
+          <p className="creator__preview-title">Token preview</p>
+          <div className="creator__preview-token">
+            <div className="creator__preview-token-image">
+              {creatorIcon ? <img src={creatorIcon} alt="Token icon preview" /> : <Uik.ReefIcon />}
+            </div>
+            <div className="creator__preview-token-info">
+              <div className="creator__preview-token-name">{creatorTokenName || 'Token name'}</div>
+              <div className="creator__preview-token-symbol">{creatorSymbolUpper || 'TOKEN'}</div>
+            </div>
+            <div className="creator__preview-token-supply">{creatorSupplyFormatted}</div>
+          </div>
+          <div className={`creator__preview-info ${!creatorBurnable ? 'creator__preview-info--disabled' : ''}`}>
+            <strong>{creatorBurnable ? 'Burnable enabled' : 'Burnable disabled'}</strong>
+            <span>Existing tokens {creatorBurnable ? 'can' : 'cannot'} be destroyed.</span>
+          </div>
+          <div className={`creator__preview-info ${!creatorMintable ? 'creator__preview-info--disabled' : ''}`}>
+            <strong>{creatorMintable ? 'Mintable enabled' : 'Mintable disabled'}</strong>
+            <span>New tokens {creatorMintable ? 'can' : 'cannot'} be created later.</span>
+          </div>
+          <Uik.Button
+            fill={!creatorValidationMsg}
+            disabled={!!creatorValidationMsg}
+            text="Create token"
+            size="large"
+            onClick={() => setCreatorConfirmOpen(true)}
+          />
+          {creatorValidationMsg ? <p className="error">{creatorValidationMsg}</p> : null}
+          {creatorStatus ? <p className="status">{creatorStatus}</p> : null}
+        </div>
+      </section>
+
+      <Uik.Modal
+        className="confirm-token"
+        title="Confirm your token"
+        isOpen={creatorConfirmOpen}
+        onClose={() => setCreatorConfirmOpen(false)}
+        footer={(
+          <Uik.Button
+            text="Create token"
+            fill
+            size="large"
+            disabled={!!creatorValidationMsg}
+            onClick={confirmCreatorDraft}
+          />
+        )}
+      >
+        <div className="confirm-token-summary">
+          <div className="confirm-token-summary-item">
+            <span>Token name</span>
+            <strong>{creatorTokenName || '-'}</strong>
+          </div>
+          <div className="confirm-token-summary-item">
+            <span>Token symbol</span>
+            <strong>{creatorSymbolUpper || '-'}</strong>
+          </div>
+          <div className="confirm-token-summary-item">
+            <span>Initial supply</span>
+            <strong>{creatorSupplyFormatted}</strong>
+          </div>
+          <div className="confirm-token-summary-item">
+            <span>Burnable</span>
+            <strong>{creatorBurnable ? 'Yes' : 'No'}</strong>
+          </div>
+          <div className="confirm-token-summary-item">
+            <span>Mintable</span>
+            <strong>{creatorMintable ? 'Yes' : 'No'}</strong>
+          </div>
+        </div>
+      </Uik.Modal>
+    </>
+  );
+
+  const poolsRouteView = (
     <section className="panel-card route-placeholder">
-      <h2>{routePlaceholderTitle}</h2>
-      <p>{routePlaceholderTitle} view is not wired yet in this build.</p>
+      <h2>Pools</h2>
+      <p>Pool list and liquidity actions can be wired next with your deployed Factory + Router addresses.</p>
       <button type="button" className="wallet-connect-btn" onClick={() => navigateRoute('swap')}>
         Open Swap
       </button>
@@ -947,18 +1195,16 @@ const App = () => {
             </button>
             <nav className="d-flex justify-content-end d-flex-vert-center">
               <ul className="navigation_menu-items">
-                <li className={`navigation_menu-items_menu-item ${activeRoute === 'tokens' ? 'navigation_menu-items_menu-item--active' : ''}`}>
-                  <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute('tokens')}>Tokens</button>
-                </li>
-                <li className={`navigation_menu-items_menu-item ${activeRoute === 'swap' ? 'navigation_menu-items_menu-item--active' : ''}`}>
-                  <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute('swap')}>Swap</button>
-                </li>
-                <li className={`navigation_menu-items_menu-item ${activeRoute === 'pools' ? 'navigation_menu-items_menu-item--active' : ''}`}>
-                  <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute('pools')}>Pools</button>
-                </li>
-                <li className={`navigation_menu-items_menu-item ${activeRoute === 'creator' ? 'navigation_menu-items_menu-item--active' : ''}`}>
-                  <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute('creator')}>Creator</button>
-                </li>
+                {NAV_ROUTES.map((item) => (
+                  <li
+                    key={item.route}
+                    className={`navigation_menu-items_menu-item ${activeRoute === item.route ? 'navigation_menu-items_menu-item--active' : ''}`}
+                  >
+                    <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute(item.route)}>
+                      {item.label}
+                    </button>
+                  </li>
+                ))}
               </ul>
             </nav>
           </div>
@@ -972,17 +1218,17 @@ const App = () => {
                     <Uik.ReefIcon className="nav-account_icon" />
                     {formattedWalletReefBalance} REEF
                   </div>
-                  <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
-                    Disconnect
-                  </button>
                 </div>
+                <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
+                  Disconnect
+                </button>
                 <button
                   type="button"
-                  className="wallet-pill"
+                  className="wallet-pill wallet-pill--account"
                   onClick={isWrongChain ? switchToReef : undefined}
                   disabled={isWrongChain && isSwitching}
                 >
-                  {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : shortAddress(address)}
+                  {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : `Account  ${shortAddress(address)}`}
                 </button>
               </>
             ) : (
@@ -1000,8 +1246,10 @@ const App = () => {
             tokensRouteView
           ) : activeRoute === 'swap' ? (
             swapRouteView
+          ) : activeRoute === 'create-token' ? (
+            creatorRouteView
           ) : (
-            routePlaceholderView
+            poolsRouteView
           )
         ) : (
           <section className="connect-state-card">
