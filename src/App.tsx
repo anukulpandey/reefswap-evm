@@ -20,6 +20,7 @@ import AssetTabs from './components/reef/AssetTabs';
 import ActivityPanel from './components/reef/ActivityPanel';
 import CreatorPage from './components/reef/creator/CreatorPage';
 import ChartView from './components/reef/ChartView';
+import PoolDetailPage from './components/reef/PoolDetailPage';
 import { useReefBalance } from './hooks/useReefBalance';
 import { useReefPrice } from './hooks/useReefPrice';
 
@@ -41,7 +42,7 @@ const SLIPPAGE_SLIDER_HELPERS = [
   { position: 100, text: '20%' },
 ];
 
-type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token' | 'chart';
+type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token' | 'chart' | 'pool-detail';
 
 const isWrapPairSelection = (a: TokenOption, b: TokenOption): boolean =>
   (a.isNative && b.address === contracts.wrappedReef) || (b.isNative && a.address === contracts.wrappedReef);
@@ -51,6 +52,8 @@ const NAV_ROUTES: { route: AppRoute; label: string; path: string }[] = [
   { route: 'swap', label: 'Swap', path: '/swap' },
   { route: 'pools', label: 'Pools', path: '/pools' },
   { route: 'create-token', label: 'Creator', path: '/create-token' },
+  { route: 'chart', label: 'Chart', path: '/chart' },
+  { route: 'pool-detail', label: 'Pool Detail', path: '/pool/reef-flpr' },
 ];
 
 const ROUTE_ALIAS: Record<string, AppRoute> = {
@@ -62,6 +65,8 @@ const ROUTE_ALIAS: Record<string, AppRoute> = {
   creator: 'create-token',
   'create-token': 'create-token',
   chart: 'chart',
+  pool: 'pool-detail',
+  'pool-detail': 'pool-detail',
 };
 
 const normalizeRouteSegment = (value: string | null | undefined): string =>
@@ -632,12 +637,15 @@ const App = () => {
   };
 
   const setAmountByPercent = (percent: number) => {
-    if (balanceIn <= 0n || percent <= 0) {
-      setAmountInText(percent === 0 ? '0' : '');
+    const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+
+    if (balanceIn <= 0n || safePercent <= 0) {
+      setAmountInText(safePercent === 0 ? '0' : '');
       return;
     }
 
-    const raw = (balanceIn * BigInt(percent)) / 100n;
+    const basisPoints = BigInt(Math.round(safePercent * 100));
+    const raw = (balanceIn * basisPoints) / 10_000n;
     setAmountInText(trimDecimalString(formatUnits(raw, tokenIn.decimals)));
   };
 
@@ -667,8 +675,9 @@ const App = () => {
     : routeLabel || '-';
   const amountSliderValue = useMemo(() => {
     if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
-    const percent = Number((parsedAmountIn * 10_000n) / balanceIn) / 100;
-    return Math.max(0, Math.min(100, Math.round(percent)));
+    const basisPoints = Number((parsedAmountIn * 10_000n) / balanceIn);
+    const percent = basisPoints / 100;
+    return Math.max(0, Math.min(100, percent));
   }, [balanceIn, parsedAmountIn]);
   const slippageSliderValue = useMemo(() => {
     const mapped = Math.round(clampedSlippage * 5);
@@ -823,11 +832,11 @@ const App = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
               {tokenIn.isNative ? (
-                <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #a93185, #5d3bad)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Uik.ReefSign style={{ width: 26, height: 26 }} />
+                <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
                 </div>
               ) : (
-                <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #7a3bbd, #5d3bad)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 18 }}>
+                <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
                   {tokenIn.symbol.charAt(0)}
                 </div>
               )}
@@ -878,7 +887,6 @@ const App = () => {
           <div style={{ flex: 1 }}>
             <Uik.Slider
               value={amountSliderValue}
-              steps={25}
               helpers={AMOUNT_SLIDER_HELPERS}
               tooltip={`${amountSliderValue}%`}
               onChange={(position: number) => setAmountByPercent(position)}
@@ -896,8 +904,8 @@ const App = () => {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
-              <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'hsl(var(--bg--h, 252), var(--bg--s, 20%), 87%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-light)', fontWeight: 700, fontSize: 18 }}>
-                {tokenOut.isNative ? <Uik.ReefSign style={{ width: 24, height: 24, opacity: 0.4 }} /> : tokenOut.symbol.charAt(0)}
+              <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
+                {tokenOut.isNative ? <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} /> : tokenOut.symbol.charAt(0)}
               </div>
               <select
                 value={tokenOut.isNative ? 'native' : tokenOut.address || ''}
@@ -1041,7 +1049,18 @@ const App = () => {
               <span className="text-right">Actions</span>
             </div>
             {/* REEF-WREEF pool row */}
-            <div className="px-6 py-4 grid grid-cols-5 items-center hover:bg-[#f8f5ff] transition-colors">
+            <div
+              className="px-6 py-4 grid grid-cols-5 items-center hover:bg-[#f8f5ff] transition-colors cursor-pointer"
+              role="button"
+              tabIndex={0}
+              onClick={() => navigateRoute('pool-detail')}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  navigateRoute('pool-detail');
+                }
+              }}
+            >
               <div className="col-span-2 flex items-center gap-3">
                 <div className="flex -space-x-2">
                   <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm">
@@ -1061,14 +1080,20 @@ const App = () => {
               <div className="flex items-center gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => navigateRoute('chart')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigateRoute('chart');
+                  }}
                   className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
                 >
                   Chart
                 </button>
                 <button
                   type="button"
-                  onClick={() => navigateRoute('swap')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    navigateRoute('swap');
+                  }}
                   className="rounded-xl bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-xs font-semibold px-3 py-1.5 hover:brightness-110 transition-all"
                 >
                   Trade
@@ -1118,12 +1143,13 @@ const App = () => {
   );
 
   const chartRouteView = <ChartView onNavigate={navigateRoute} />;
+  const poolDetailRouteView = <PoolDetailPage />;
 
   return (
     <div className="min-h-screen bg-background">
       <AppHeader activeRoute={activeRoute} onNavigate={navigateRoute} />
 
-      <main className={activeRoute === 'tokens' || activeRoute === 'pools' || activeRoute === 'chart' || activeRoute === 'swap' ? '' : 'dashboard-content'}>
+      <main className={activeRoute === 'tokens' || activeRoute === 'pools' || activeRoute === 'chart' || activeRoute === 'swap' || activeRoute === 'pool-detail' ? '' : 'dashboard-content'}>
         {isConnected ? (
           activeRoute === 'tokens' ? (
             tokensRouteView
@@ -1131,6 +1157,8 @@ const App = () => {
             swapRouteView
           ) : activeRoute === 'create-token' ? (
             creatorRouteView
+          ) : activeRoute === 'pool-detail' ? (
+            poolDetailRouteView
           ) : activeRoute === 'chart' ? (
             chartRouteView
           ) : (

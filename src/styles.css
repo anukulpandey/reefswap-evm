@@ -1337,8 +1337,7 @@ input {
   }
 
   .dashboard-grid--tokens,
-  .dashboard-grid--swap-route,
-  .creator {
+  .dashboard-grid--swap-route {
     grid-template-columns: 1fr;
   }
 

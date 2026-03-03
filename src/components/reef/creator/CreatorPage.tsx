@@ -36,13 +36,13 @@ const CreatorPage = (): JSX.Element => {
     <>
       <div className="creator">
         <div className="creator__form">
-          <Uik.Container flow="spaceBetween">
-            <Uik.Container vertical flow="start">
-              <Uik.Text type="headline">Create your token</Uik.Text>
-              <Uik.Text type="lead">Use Reef chain to create your own token.</Uik.Text>
-            </Uik.Container>
+          <div className="creator__intro">
+            <div className="creator__intro-copy">
+              <h1 className="creator__title">Create your token</h1>
+              <p className="creator__subtitle">Use Reef chain to create your own token.</p>
+            </div>
             <IconUpload value={icon} onChange={setIcon} />
-          </Uik.Container>
+          </div>
 
           <Uik.Form>
             <Uik.Container className="creator__form-main">
@@ -91,7 +91,7 @@ const CreatorPage = (): JSX.Element => {
         </div>
 
         <div className="creator__preview">
-          <Uik.Text type="lead" className="creator__preview-title">Token Preview</Uik.Text>
+          <h2 className="creator__preview-title">Token Preview</h2>
 
           <div className="creator__preview-token">
             <div className="creator__preview-token-image">
@@ -100,8 +100,8 @@ const CreatorPage = (): JSX.Element => {
               ) : null}
             </div>
             <div className="creator__preview-token-info">
-              <div className="creator__preview-token-name">{tokenName || ''}</div>
-              <div className="creator__preview-token-symbol">{symbol.toUpperCase() || ''}</div>
+              <div className="creator__preview-token-name">{tokenName || ' '}</div>
+              <div className="creator__preview-token-symbol">{symbol.toUpperCase() || ' '}</div>
             </div>
             {!!initialSupply && (
               <Uik.Text className="creator__preview-token-supply" type="headline">
@@ -111,30 +111,31 @@ const CreatorPage = (): JSX.Element => {
           </div>
 
           <div className={`creator__preview-info ${!burnable ? 'creator__preview-info--disabled' : ''}`}>
-            <Uik.Container flow="start">
+            <div className="creator__preview-info-head">
               {burnable
                 ? <CheckCircle2 className="creator-check-icon" />
                 : <XCircle className="creator-check-icon danger" />}
-              <Uik.Text className="creator__preview-info-title">{!burnable && 'Not '}Burnable</Uik.Text>
-            </Uik.Container>
-            <Uik.Text type="mini">
+              <p className="creator__preview-info-title">{!burnable && 'Not '}Burnable</p>
+            </div>
+            <p className="creator__preview-info-description">
               Existing tokens {burnable ? 'can be destroyed to decrease' : 'cannot be destroyed to decrease'} the total supply.
-            </Uik.Text>
+            </p>
           </div>
 
           <div className={`creator__preview-info ${!mintable ? 'creator__preview-info--disabled' : ''}`}>
-            <Uik.Container flow="start">
+            <div className="creator__preview-info-head">
               {mintable
                 ? <CheckCircle2 className="creator-check-icon" />
                 : <XCircle className="creator-check-icon danger" />}
-              <Uik.Text className="creator__preview-info-title">{!mintable && 'Not '}Mintable</Uik.Text>
-            </Uik.Container>
-            <Uik.Text type="mini">
+              <p className="creator__preview-info-title">{!mintable && 'Not '}Mintable</p>
+            </div>
+            <p className="creator__preview-info-description">
               New tokens {mintable ? 'can be created and added to' : 'cannot be created and added to'} the total supply.
-            </Uik.Text>
+            </p>
           </div>
 
           <Uik.Button
+            className="creator__submit"
             disabled={!!validationMsg}
             text="Create Token"
             fill={!validationMsg}
