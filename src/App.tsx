@@ -12,6 +12,7 @@ import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'vi
 import { erc20Abi, reefswapFactoryAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
+import BuyReefButton from './components/BuyReefButton';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from './lib/utils';
 
@@ -1045,11 +1046,7 @@ const App = () => {
           <h2>{formattedWalletReefUsd}</h2>
         </div>
 
-        <button type="button" className="buy-reef-btn">
-          <Uik.ReefSign className="buy-reef-btn__icon" />
-          <span className="buy-reef-btn__text">Buy Reef</span>
-          <Uik.Bubbles />
-        </button>
+        <BuyReefButton onClick={() => navigateRoute('swap')} />
       </section>
 
       <section className="dashboard-grid dashboard-grid--tokens">
