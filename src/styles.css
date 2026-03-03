@@ -343,6 +343,14 @@ body {
   align-items: start;
 }
 
+.dashboard-grid--tokens {
+  grid-template-columns: minmax(540px, 1.75fr) minmax(360px, 0.95fr);
+}
+
+.dashboard-grid--swap {
+  grid-template-columns: minmax(360px, 0.93fr) minmax(620px, 1.42fr) minmax(390px, 1fr);
+}
+
 .panel-card {
   border-radius: 1.6rem;
   background-color: #f1edf8;
@@ -735,6 +743,29 @@ input {
   padding: 1.45rem;
 }
 
+.route-placeholder {
+  max-width: 760px;
+  margin: 2rem auto 0;
+  padding: 2rem;
+  display: grid;
+  gap: 0.8rem;
+  text-align: center;
+}
+
+.route-placeholder h2 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.route-placeholder p {
+  margin: 0;
+  color: #756d88;
+}
+
+.route-placeholder .wallet-connect-btn {
+  justify-self: center;
+}
+
 .info-card ul {
   margin: 10px 0 0;
   padding: 0;
@@ -935,8 +966,12 @@ input {
 }
 
 @media (max-width: 1500px) {
-  .dashboard-grid {
+  .dashboard-grid--swap {
     grid-template-columns: minmax(300px, 0.85fr) minmax(520px, 1.25fr) minmax(320px, 1fr);
+  }
+
+  .dashboard-grid--tokens {
+    grid-template-columns: minmax(460px, 1.5fr) minmax(320px, 0.9fr);
   }
 }
 
