@@ -322,6 +322,20 @@ const App = () => {
     }
   };
 
+  const addReefChain = async (): Promise<boolean> => {
+    if (!window.ethereum) {
+      setActionError('MetaMask extension not found in browser.');
+      return false;
+    }
+
+    await window.ethereum.request({
+      method: 'wallet_addEthereumChain',
+      params: [addEthereumChainParams],
+    });
+
+    return true;
+  };
+
   const switchToReef = async () => {
     setActionError('');
     try {
@@ -331,10 +345,8 @@ const App = () => {
         (error as { cause?: { code?: number } })?.cause?.code;
 
       if (code === 4902 && window.ethereum) {
-        await window.ethereum.request({
-          method: 'wallet_addEthereumChain',
-          params: [addEthereumChainParams],
-        });
+        const added = await addReefChain();
+        if (!added) return;
         await switchChainAsync({ chainId: reefChain.id });
         return;
       }
@@ -616,298 +628,345 @@ const App = () => {
       </header>
 
       <main className="dashboard-content">
-        <section className="portfolio-row">
-          <div className="portfolio-summary">
-            <p className="portfolio-label">Total</p>
-            <h2>{formattedWalletReefUsd}</h2>
-            <div className="portfolio-splits">
-              <div>
-                <span>Available</span>
-                <strong>{formattedWalletReefUsd}</strong>
+        {isConnected ? (
+          <>
+            <section className="portfolio-row">
+              <div className="portfolio-summary">
+                <p className="portfolio-label">Total</p>
+                <h2>{formattedWalletReefUsd}</h2>
+                <div className="portfolio-splits">
+                  <div>
+                    <span>Available</span>
+                    <strong>{formattedWalletReefUsd}</strong>
+                  </div>
+                  <div>
+                    <span>Staked</span>
+                    <strong>$0.00</strong>
+                  </div>
+                </div>
               </div>
-              <div>
-                <span>Staked</span>
-                <strong>$0.00</strong>
-              </div>
-            </div>
-          </div>
 
-          <button type="button" className="buy-reef-btn">
-            <Uik.ReefSign className="buy-reef-btn__icon" />
-            <span className="buy-reef-btn__text">Buy Reef</span>
-            <Uik.Bubbles />
-          </button>
-        </section>
-
-        <section className="dashboard-grid">
-          <aside className="asset-panel panel-card">
-            <div className="asset-tabs">
-              <button
-                type="button"
-                className={`asset-tab ${assetTab === 'tokens' ? 'active' : ''}`}
-                onClick={() => setAssetTab('tokens')}
-              >
-                Tokens
+              <button type="button" className="buy-reef-btn">
+                <Uik.ReefSign className="buy-reef-btn__icon" />
+                <span className="buy-reef-btn__text">Buy Reef</span>
+                <Uik.Bubbles />
               </button>
-              <button
-                type="button"
-                className={`asset-tab ${assetTab === 'nfts' ? 'active' : ''}`}
-                onClick={() => setAssetTab('nfts')}
-              >
-                NFTs
-              </button>
-            </div>
+            </section>
 
-            {assetTab === 'tokens' ? (
-              <ul className="token-list">
-                {tokens.slice(0, 8).map((token) => {
-                  const key = tokenKey(token);
-                  const inSelected = key === tokenKey(tokenIn);
-                  const outSelected = key === tokenKey(tokenOut);
-                  const tokenBalance = inSelected
-                    ? balanceIn
-                    : outSelected
-                      ? balanceOut
-                      : 0n;
+            <section className="dashboard-grid">
+              <aside className="asset-panel panel-card">
+                <div className="asset-tabs">
+                  <button
+                    type="button"
+                    className={`asset-tab ${assetTab === 'tokens' ? 'active' : ''}`}
+                    onClick={() => setAssetTab('tokens')}
+                  >
+                    Tokens
+                  </button>
+                  <button
+                    type="button"
+                    className={`asset-tab ${assetTab === 'nfts' ? 'active' : ''}`}
+                    onClick={() => setAssetTab('nfts')}
+                  >
+                    NFTs
+                  </button>
+                </div>
 
-                  return (
-                    <li key={`left-${key}`} className="token-row">
-                      <span className="token-badge">{token.symbol.slice(0, 1)}</span>
-                      <div className="token-row__meta">
-                        <strong>{token.symbol}</strong>
-                        <small>{token.name}</small>
+                {assetTab === 'tokens' ? (
+                  <ul className="token-list">
+                    {tokens.slice(0, 8).map((token) => {
+                      const key = tokenKey(token);
+                      const inSelected = key === tokenKey(tokenIn);
+                      const outSelected = key === tokenKey(tokenOut);
+                      const tokenBalance = inSelected
+                        ? balanceIn
+                        : outSelected
+                          ? balanceOut
+                          : 0n;
+
+                      return (
+                        <li key={`left-${key}`} className="token-row">
+                          <span className="token-badge">{token.symbol.slice(0, 1)}</span>
+                          <div className="token-row__meta">
+                            <strong>{token.symbol}</strong>
+                            <small>{token.name}</small>
+                          </div>
+                          <div className="token-row__amount">
+                            <strong>{formatDisplayAmount(tokenBalance, token.decimals, 4)}</strong>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <div className="nft-empty">Your wallet does not hold NFTs.</div>
+                )}
+              </aside>
+
+              <section className="swap-stage">
+                <article className="swap-modal">
+                  <div className="modal-head">
+                    <h2>Swap</h2>
+                    <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="swap-box">
+                    <div className="field-grid">
+                      <TokenSelect label="From" value={tokenIn} options={tokens} onChange={setTokenIn} />
+                      <label className="amount-field">
+                        <span>Amount</span>
+                        <input
+                          value={amountInText}
+                          onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
+                          inputMode="decimal"
+                          placeholder="0.0"
+                        />
+                        <small>Balance: {formattedBalanceIn} {tokenIn.symbol}</small>
+                      </label>
+                    </div>
+
+                    <div className="amount-controls">
+                      <button type="button" className="icon-switch" onClick={onSwitchTokens} aria-label="Switch tokens">
+                        ↕
+                      </button>
+                      <div className="preset-strip">
+                        {AMOUNT_PRESETS.map((percent) => (
+                          <button
+                            key={percent}
+                            type="button"
+                            className="preset-button"
+                            onClick={() => setAmountByPercent(percent)}
+                          >
+                            {percent}%
+                          </button>
+                        ))}
                       </div>
-                      <div className="token-row__amount">
-                        <strong>{formatDisplayAmount(tokenBalance, token.decimals, 4)}</strong>
+                    </div>
+
+                    <div className="field-grid">
+                      <TokenSelect label="To" value={tokenOut} options={tokens} onChange={setTokenOut} />
+                      <label className="amount-field">
+                        <span>Estimated Output</span>
+                        <input value={amountOutText} readOnly placeholder="0.0" />
+                        <small>Balance: {formattedBalanceOut} {tokenOut.symbol}</small>
+                      </label>
+                    </div>
+
+                    <div className="detail-box">
+                      <div>
+                        <span>Rate</span>
+                        <strong>{detailsRate}</strong>
                       </div>
+                      <div>
+                        <span>Fee</span>
+                        <strong>{isWrapPair ? '0%' : '0.30%'}</strong>
+                      </div>
+                      <div>
+                        <span>Slippage</span>
+                        <strong>{clampedSlippage.toFixed(1)}%</strong>
+                      </div>
+                      <div>
+                        <span>Quote</span>
+                        <strong>{isWrapPair ? '1:1 wrap quote' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
+                      </div>
+                    </div>
+
+                    <div className="slippage-block">
+                      <div className="slippage-row">
+                        <label>
+                          <span>Slippage (%)</span>
+                          <input
+                            value={slippageText}
+                            onChange={(event) => setSlippageText(normalizeInput(event.target.value))}
+                            inputMode="decimal"
+                          />
+                        </label>
+                        <strong>{clampedSlippage.toFixed(1)}%</strong>
+                      </div>
+                      <input
+                        className="slippage-range"
+                        type="range"
+                        min="0"
+                        max="20"
+                        step="0.1"
+                        value={clampedSlippage}
+                        onChange={(event) => setSlippageText(event.target.value)}
+                      />
+                      <div className="preset-strip">
+                        {SLIPPAGE_PRESETS.map((preset) => (
+                          <button key={preset} type="button" className="preset-button" onClick={() => setSlippagePreset(preset)}>
+                            {preset}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="import-token">
+                      <input
+                        placeholder="Import token by contract address"
+                        value={importAddress}
+                        onChange={(event) => setImportAddress(event.target.value)}
+                      />
+                      <button type="button" className="secondary" onClick={importToken}>
+                        Import
+                      </button>
+                    </div>
+
+                    {importError ? <p className="error">{importError}</p> : null}
+
+                    <div className="meta-grid">
+                      <div>
+                        <span>Route</span>
+                        <strong>{routeLabel || '-'}</strong>
+                      </div>
+                      <div>
+                        <span>Minimum Received</span>
+                        <strong>{minOut > 0n ? `${formatDisplayAmount(minOut, tokenOut.decimals, 8)} ${tokenOut.symbol}` : '-'}</strong>
+                      </div>
+                      <div>
+                        <span>First Hop Pair</span>
+                        <strong>{isWrapPair ? 'Not required' : firstHopPair ? shortAddress(firstHopPair) : 'Not found yet'}</strong>
+                      </div>
+                      <div>
+                        <span>Quote Status</span>
+                        <strong>{isWrapPair ? 'Ready' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
+                      </div>
+                    </div>
+
+                    {isWrongChain ? (
+                      <button type="button" onClick={switchToReef} disabled={isSwitching}>
+                        {isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
+                      </button>
+                    ) : requiresApproval ? (
+                      <button type="button" onClick={approve} disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}>
+                        {isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
+                      </button>
+                    ) : (
+                      <button type="button" onClick={swap} disabled={!canSwap || isSwapping || isRefreshing}>
+                        {swapButtonLabel}
+                      </button>
+                    )}
+
+                    {statusMessage ? <p className="status">{statusMessage}</p> : null}
+                    {actionError ? <p className="error">{actionError}</p> : null}
+                    {lastTxHash ? (
+                      <a
+                        className="tx-link"
+                        href={`${reefChain.blockExplorers.default.url}/tx/${lastTxHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View Transaction: {shortAddress(lastTxHash)}
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              </section>
+
+              <aside className="activity-panel">
+                <section className="panel-card activity-card">
+                  <div className="activity-head">
+                    <h3>Activity</h3>
+                    <a href={reefChain.blockExplorers.default.url} target="_blank" rel="noreferrer">
+                      Open Explorer
+                    </a>
+                  </div>
+                  <ul className="activity-list">
+                    <li>
+                      <strong>Sent REEF</strong>
+                      <span>-11</span>
                     </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="nft-empty">Your wallet does not hold NFTs.</div>
-            )}
-          </aside>
+                    <li>
+                      <strong>Received PRLS</strong>
+                      <span>+9.2449</span>
+                    </li>
+                    <li>
+                      <strong>Sent REEF</strong>
+                      <span>-2000</span>
+                    </li>
+                    {lastTxHash ? (
+                      <li>
+                        <strong>Latest Tx</strong>
+                        <span>{shortAddress(lastTxHash)}</span>
+                      </li>
+                    ) : null}
+                  </ul>
+                </section>
 
-          <section className="swap-stage">
-          <article className="swap-modal">
-            <div className="modal-head">
-              <h2>Swap</h2>
-              <button type="button" className="close-btn" onClick={() => setAmountInText('')} aria-label="Reset input">
-                ×
+                <section className="panel-card info-card">
+                  <h3>Connection</h3>
+                  <ul>
+                    <li>
+                      <span>RPC</span>
+                      <code>{reefChain.rpcUrls.default.http[0]}</code>
+                    </li>
+                    <li>
+                      <span>Router WETH()</span>
+                      <code>{routerWrappedTokenSource === 'loading' ? 'Checking...' : routerWrappedToken}</code>
+                    </li>
+                    <li>
+                      <span>Router02</span>
+                      <code>{contracts.router}</code>
+                    </li>
+                  </ul>
+                  {routerWrappedTokenSource === 'fallback' ? (
+                    <p className="note">Router `WETH()` call failed on this RPC; using configured WrappedREEF fallback.</p>
+                  ) : null}
+                </section>
+              </aside>
+            </section>
+          </>
+        ) : (
+          <section className="connect-state-card">
+            <div className="connect-state-orb connect-state-orb-left" />
+            <div className="connect-state-orb connect-state-orb-right" />
+            <div className="connect-state-content">
+              <div className="connect-state-icon">
+                <Uik.ReefIcon />
+              </div>
+              <h2>Connect to Reefswap</h2>
+              <p>Connect MetaMask to view balances, activity, and swap tokens on Reef chain.</p>
+              <div className="connect-state-badges">
+                <span>Secure</span>
+                <span>Non-custodial</span>
+                <span>Mainnet ready</span>
+              </div>
+              <button type="button" className="connect-state-btn" onClick={connectWallet} disabled={isConnecting}>
+                {isConnecting ? 'Connecting...' : 'Connect Wallet'}
               </button>
-            </div>
-
-            <div className="swap-box">
-              <div className="field-grid">
-                <TokenSelect label="From" value={tokenIn} options={tokens} onChange={setTokenIn} />
-                <label className="amount-field">
-                  <span>Amount</span>
-                  <input
-                    value={amountInText}
-                    onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
-                    inputMode="decimal"
-                    placeholder="0.0"
-                  />
-                  <small>Balance: {formattedBalanceIn} {tokenIn.symbol}</small>
-                </label>
-              </div>
-
-              <div className="amount-controls">
-                <button type="button" className="icon-switch" onClick={onSwitchTokens} aria-label="Switch tokens">
-                  ↕
-                </button>
-                <div className="preset-strip">
-                  {AMOUNT_PRESETS.map((percent) => (
-                    <button
-                      key={percent}
-                      type="button"
-                      className="preset-button"
-                      onClick={() => setAmountByPercent(percent)}
-                    >
-                      {percent}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="field-grid">
-                <TokenSelect label="To" value={tokenOut} options={tokens} onChange={setTokenOut} />
-                <label className="amount-field">
-                  <span>Estimated Output</span>
-                  <input value={amountOutText} readOnly placeholder="0.0" />
-                  <small>Balance: {formattedBalanceOut} {tokenOut.symbol}</small>
-                </label>
-              </div>
-
-              <div className="detail-box">
-                <div>
-                  <span>Rate</span>
-                  <strong>{detailsRate}</strong>
-                </div>
-                <div>
-                  <span>Fee</span>
-                  <strong>{isWrapPair ? '0%' : '0.30%'}</strong>
-                </div>
-                <div>
-                  <span>Slippage</span>
-                  <strong>{clampedSlippage.toFixed(1)}%</strong>
-                </div>
-                <div>
-                  <span>Quote</span>
-                  <strong>{isWrapPair ? '1:1 wrap quote' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
-                </div>
-              </div>
-
-              <div className="slippage-block">
-                <div className="slippage-row">
-                  <label>
-                    <span>Slippage (%)</span>
-                    <input
-                      value={slippageText}
-                      onChange={(event) => setSlippageText(normalizeInput(event.target.value))}
-                      inputMode="decimal"
-                    />
-                  </label>
-                  <strong>{clampedSlippage.toFixed(1)}%</strong>
-                </div>
-                <input
-                  className="slippage-range"
-                  type="range"
-                  min="0"
-                  max="20"
-                  step="0.1"
-                  value={clampedSlippage}
-                  onChange={(event) => setSlippageText(event.target.value)}
-                />
-                <div className="preset-strip">
-                  {SLIPPAGE_PRESETS.map((preset) => (
-                    <button key={preset} type="button" className="preset-button" onClick={() => setSlippagePreset(preset)}>
-                      {preset}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="import-token">
-                <input
-                  placeholder="Import token by contract address"
-                  value={importAddress}
-                  onChange={(event) => setImportAddress(event.target.value)}
-                />
-                <button type="button" className="secondary" onClick={importToken}>
-                  Import
-                </button>
-              </div>
-
-              {importError ? <p className="error">{importError}</p> : null}
-
-              <div className="meta-grid">
-                <div>
-                  <span>Route</span>
-                  <strong>{routeLabel || '-'}</strong>
-                </div>
-                <div>
-                  <span>Minimum Received</span>
-                  <strong>{minOut > 0n ? `${formatDisplayAmount(minOut, tokenOut.decimals, 8)} ${tokenOut.symbol}` : '-'}</strong>
-                </div>
-                <div>
-                  <span>First Hop Pair</span>
-                  <strong>{isWrapPair ? 'Not required' : firstHopPair ? shortAddress(firstHopPair) : 'Not found yet'}</strong>
-                </div>
-                <div>
-                  <span>Quote Status</span>
-                  <strong>{isWrapPair ? 'Ready' : isQuoting ? 'Fetching...' : quoteError || 'Ready'}</strong>
-                </div>
-              </div>
-
-              {isWrongChain ? (
-                <button type="button" onClick={switchToReef} disabled={isSwitching}>
-                  {isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
-                </button>
-              ) : !isConnected ? (
-                <button type="button" onClick={connectWallet} disabled={isConnecting}>
-                  {isConnecting ? 'Connecting...' : 'Connect MetaMask'}
-                </button>
-              ) : requiresApproval ? (
-                <button type="button" onClick={approve} disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}>
-                  {isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`}
-                </button>
-              ) : (
-                <button type="button" onClick={swap} disabled={!canSwap || isSwapping || isRefreshing}>
-                  {swapButtonLabel}
-                </button>
-              )}
-
               {statusMessage ? <p className="status">{statusMessage}</p> : null}
               {actionError ? <p className="error">{actionError}</p> : null}
-              {lastTxHash ? (
-                <a
-                  className="tx-link"
-                  href={`${reefChain.blockExplorers.default.url}/tx/${lastTxHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  View Transaction: {shortAddress(lastTxHash)}
-                </a>
-              ) : null}
             </div>
-          </article>
+            <Uik.Bubbles className="connect-state-bubbles" />
           </section>
-
-          <aside className="activity-panel">
-            <section className="panel-card activity-card">
-              <div className="activity-head">
-                <h3>Activity</h3>
-                <a href={reefChain.blockExplorers.default.url} target="_blank" rel="noreferrer">
-                  Open Explorer
-                </a>
-              </div>
-              <ul className="activity-list">
-                <li>
-                  <strong>Sent REEF</strong>
-                  <span>-11</span>
-                </li>
-                <li>
-                  <strong>Received PRLS</strong>
-                  <span>+9.2449</span>
-                </li>
-                <li>
-                  <strong>Sent REEF</strong>
-                  <span>-2000</span>
-                </li>
-                {lastTxHash ? (
-                  <li>
-                    <strong>Latest Tx</strong>
-                    <span>{shortAddress(lastTxHash)}</span>
-                  </li>
-                ) : null}
-              </ul>
-            </section>
-
-            <section className="panel-card info-card">
-              <h3>Connection</h3>
-              <ul>
-                <li>
-                  <span>RPC</span>
-                  <code>{reefChain.rpcUrls.default.http[0]}</code>
-                </li>
-                <li>
-                  <span>Router WETH()</span>
-                  <code>{routerWrappedTokenSource === 'loading' ? 'Checking...' : routerWrappedToken}</code>
-                </li>
-                <li>
-                  <span>Router02</span>
-                  <code>{contracts.router}</code>
-                </li>
-              </ul>
-              {routerWrappedTokenSource === 'fallback' ? (
-                <p className="note">Router `WETH()` call failed on this RPC; using configured WrappedREEF fallback.</p>
-              ) : null}
-            </section>
-          </aside>
-        </section>
+        )}
       </main>
+      {!isConnected ? (
+        <footer className="unlogged-footer">
+          <button
+            type="button"
+            className="add-metamask-btn"
+            onClick={async () => {
+              setActionError('');
+              try {
+                await addReefChain();
+                setStatusMessage('Reef chain added to MetaMask.');
+              } catch (error) {
+                setActionError(getErrorMessage(error));
+              }
+            }}
+          >
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/3/36/MetaMask_Fox.svg"
+              alt=""
+              className="metamask-logo"
+            />
+            Add to MetaMask
+          </button>
+        </footer>
+      ) : null}
     </div>
   );
 };

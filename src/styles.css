@@ -38,7 +38,7 @@ body {
 }
 
 .navigation {
-  min-height: 62px;
+  min-height: 56px;
   background-color: #f3f0f8;
   box-shadow: 0 5px 20px -5px #cdc4df;
   display: flex;
@@ -57,7 +57,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
 }
 
 .navigation__left,
@@ -67,7 +67,7 @@ body {
 }
 
 .navigation__left {
-  gap: 18px;
+  gap: 12px;
 }
 
 .navigation__right {
@@ -75,7 +75,7 @@ body {
 }
 
 .logo-btn {
-  height: 44px;
+  height: 36px;
   width: auto;
   border: none;
   background: none;
@@ -87,15 +87,16 @@ body {
 }
 
 .navigation__logo {
-  width: 130px;
+  width: 92px;
+  max-width: 92px;
   height: auto;
 }
 
 .navigation__logo-suffix {
-  padding-top: 0.7em;
+  padding-top: 0.42em;
   color: #0b3397;
-  font-size: 1.95rem;
-  margin-left: 0.35rem;
+  font-size: 1.02rem;
+  margin-left: 0.22rem;
   opacity: 0.75;
   font-family: 'Sora', sans-serif;
   font-weight: 400;
@@ -107,7 +108,7 @@ body {
   align-items: center;
   list-style: none;
   padding: 0;
-  gap: 28px;
+  gap: 20px;
 }
 
 .navigation_menu-items_menu-item {
@@ -116,7 +117,7 @@ body {
 
 .navigation_menu-items_menu-item_link {
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-light);
   background: transparent;
@@ -758,6 +759,155 @@ input {
   color: var(--danger);
 }
 
+.connect-state-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1.6rem;
+  background: #f2eff8;
+  box-shadow: 0 12px 35px #6946a123;
+  padding: 4.4rem 2.5rem;
+  text-align: center;
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+}
+
+.connect-state-orb {
+  position: absolute;
+  border-radius: 50%;
+  width: 260px;
+  height: 260px;
+  filter: blur(42px);
+  pointer-events: none;
+}
+
+.connect-state-orb-left {
+  left: -80px;
+  top: -80px;
+  background: linear-gradient(135deg, rgb(169 49 133 / 28%), rgb(93 59 173 / 22%));
+}
+
+.connect-state-orb-right {
+  right: -60px;
+  bottom: -60px;
+  background: linear-gradient(135deg, rgb(93 59 173 / 24%), rgb(169 49 133 / 26%));
+}
+
+.connect-state-content {
+  position: relative;
+  z-index: 2;
+  max-width: 620px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.connect-state-icon {
+  width: 84px;
+  height: 84px;
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 74%);
+  box-shadow: 0 6px 22px #7f68a326;
+  display: grid;
+  place-items: center;
+  margin-bottom: 1.1rem;
+}
+
+.connect-state-icon .uik-reef-icon {
+  width: 40px;
+  height: 40px;
+  color: #7a3bbd;
+}
+
+.connect-state-content h2 {
+  margin: 0;
+  font-size: 2.2rem;
+  color: #1b1530;
+}
+
+.connect-state-content p {
+  margin: 0.62rem 0 0;
+  font-size: 1rem;
+  color: #8e899c;
+  line-height: 1.42;
+}
+
+.connect-state-badges {
+  margin-top: 1.35rem;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.connect-state-badges span {
+  border-radius: 999px;
+  background: rgb(255 255 255 / 70%);
+  padding: 8px 12px;
+  font-size: 0.82rem;
+  color: #8e899c;
+  font-weight: 600;
+}
+
+.connect-state-btn {
+  margin-top: 1.2rem;
+  border-radius: 13px;
+  border: 0;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: inherit;
+  color: white;
+  background: linear-gradient(90deg, var(--primary), var(--secondary));
+  cursor: pointer;
+}
+
+.connect-state-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.connect-state-bubbles {
+  position: absolute;
+  inset: 0;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.unlogged-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #f2f0f8;
+  border-top: 1px solid #e2d9f0;
+  padding: 0.72rem 1.5rem;
+  display: flex;
+  justify-content: center;
+  z-index: 20;
+}
+
+.add-metamask-btn {
+  border-radius: 999px;
+  border: 1px solid #d2c4e8;
+  background: rgb(255 255 255 / 76%);
+  color: #5d3bad;
+  padding: 10px 14px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px #7a56a118;
+}
+
+.metamask-logo {
+  width: 16px;
+  height: 16px;
+}
+
 @media (max-width: 1500px) {
   .dashboard-grid {
     grid-template-columns: minmax(260px, 0.78fr) minmax(520px, 1.3fr) minmax(290px, 0.92fr);
@@ -804,15 +954,25 @@ input {
   }
 
   .navigation__logo {
-    width: 94px;
+    width: 72px;
+    max-width: 72px;
   }
 
   .navigation__logo-suffix {
-    font-size: 1.4rem;
+    font-size: 0.95rem;
   }
 
   .portfolio-summary h2 {
     font-size: 2.2rem;
+  }
+
+  .connect-state-card {
+    padding: 3.2rem 1.2rem;
+    min-height: 360px;
+  }
+
+  .connect-state-content h2 {
+    font-size: 1.8rem;
   }
 
   .field-grid,
