@@ -558,6 +558,11 @@ const App = () => {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(Number(formatUnits(walletNativeBalance, nativeReef.decimals)) * 0.0001);
+  const dashboardTokens = useMemo(() => {
+    const reef = tokens.find((token) => token.symbol === 'REEF');
+    const wreef = tokens.find((token) => token.symbol === 'WREEF');
+    return [reef, wreef].filter((token): token is TokenOption => !!token);
+  }, [tokens]);
   const swapButtonLabel = isSwapping
     ? isWrapPair
       ? tokenIn.isNative
@@ -674,7 +679,7 @@ const App = () => {
 
                 {assetTab === 'tokens' ? (
                   <ul className="token-list">
-                    {tokens.slice(0, 8).map((token) => {
+                    {dashboardTokens.map((token) => {
                       const key = tokenKey(token);
                       const inSelected = key === tokenKey(tokenIn);
                       const outSelected = key === tokenKey(tokenOut);
