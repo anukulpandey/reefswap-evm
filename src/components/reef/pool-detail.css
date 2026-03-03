@@ -276,17 +276,17 @@
   margin: -1.05rem auto 0;
   padding: 0 35px 0.95rem;
   display: grid;
-  grid-template-columns: minmax(380px, 0.9fr) minmax(680px, 1.35fr);
-  gap: 1rem;
+  grid-template-columns: minmax(420px, 450px) minmax(0, 1fr);
+  gap: 1.25rem;
   align-items: stretch;
   position: relative;
   z-index: 2;
 }
 
 .pool-actions {
-  margin-right: 35px;
-  width: 450px;
-  min-width: 450px;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .uik-pool-actions__top {
@@ -497,8 +497,9 @@
   flex-flow: row nowrap;
   align-items: stretch;
   padding-bottom: 35px;
-  max-width: calc(100% - 485px);
-  width: calc(100% - 485px);
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .pool-chart .uik-card {
@@ -630,18 +631,7 @@
 
   .pool__content {
     padding: 0 18px 0.95rem;
-    grid-template-columns: minmax(360px, 0.95fr) minmax(620px, 1.32fr);
-  }
-
-  .pool-actions {
-    margin-right: 22px;
-    width: 430px;
-    min-width: 430px;
-  }
-
-  .pool-chart {
-    max-width: calc(100% - 452px);
-    width: calc(100% - 452px);
+    grid-template-columns: minmax(390px, 430px) minmax(0, 1fr);
   }
 }
 
