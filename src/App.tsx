@@ -1318,6 +1318,22 @@ const App = () => {
             <button type="button" className="flex items-center gap-2 bg-transparent border-0 p-0" onClick={() => navigateRoute('tokens')}>
               <Uik.ReefLogo />
             </button>
+            <nav className="flex items-center gap-7">
+              {NAV_ROUTES.map((item) => (
+                <button
+                  key={item.route}
+                  type="button"
+                  onClick={() => navigateRoute(item.route)}
+                  className={`text-[2rem] font-semibold leading-none transition-colors ${
+                    activeRoute === item.route
+                      ? 'bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent'
+                      : 'text-[#7f7991] hover:text-[#5d3bad]'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-3 rounded-full bg-[#f1edf8] px-5 py-3 shadow-sm">
