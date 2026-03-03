@@ -170,8 +170,6 @@ const App = () => {
   const [isSwapping, setIsSwapping] = useState(false);
 
   const [quoteError, setQuoteError] = useState('');
-  const [actionError, setActionError] = useState('');
-  const [statusMessage, setStatusMessage] = useState('');
   const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
 
   const [importAddress, setImportAddress] = useState('');
@@ -181,6 +179,18 @@ const App = () => {
     return resolveRouteFromLocation(window.location);
   });
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
+
+  const showInfoToast = useCallback((message: string) => {
+    Uik.notify.info({ message });
+  }, []);
+
+  const showSuccessToast = useCallback((message: string) => {
+    Uik.notify.success({ message });
+  }, []);
+
+  const showErrorToast = useCallback((message: string) => {
+    Uik.notify.danger({ message });
+  }, []);
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
@@ -306,11 +316,11 @@ const App = () => {
         setFirstHopPair(null);
       }
     } catch (error) {
-      setActionError(getErrorMessage(error));
+      showErrorToast(getErrorMessage(error));
     } finally {
       setIsRefreshing(false);
     }
-  }, [address, isWrapPair, publicClient, swapPath, tokenIn, tokenOut]);
+  }, [address, isWrapPair, publicClient, showErrorToast, swapPath, tokenIn, tokenOut]);
 
   useEffect(() => {
     if (!publicClient) {
@@ -421,25 +431,22 @@ const App = () => {
   };
 
   const connectWallet = async () => {
-    setActionError('');
-    setStatusMessage('');
-
     const connector = connectors.find((item) => item.id === 'metaMask') || connectors[0];
     if (!connector) {
-      setActionError('No injected wallet connector found. Install MetaMask first.');
+      showErrorToast('No injected wallet connector found. Install MetaMask first.');
       return;
     }
 
     try {
       await connectAsync({ connector });
     } catch (error) {
-      setActionError(getErrorMessage(error));
+      showErrorToast(getErrorMessage(error));
     }
   };
 
   const addReefChain = async (): Promise<boolean> => {
     if (!window.ethereum) {
-      setActionError('MetaMask extension not found in browser.');
+      showErrorToast('MetaMask extension not found in browser.');
       return false;
     }
 
@@ -452,7 +459,6 @@ const App = () => {
   };
 
   const switchToReef = async () => {
-    setActionError('');
     try {
       await switchChainAsync({ chainId: reefChain.id });
     } catch (error) {
@@ -466,15 +472,14 @@ const App = () => {
         return;
       }
 
-      setActionError(getErrorMessage(error));
+      showErrorToast(getErrorMessage(error));
     }
   };
 
   const approve = async () => {
     if (!walletClient || !publicClient || !address || tokenIn.isNative || !tokenIn.address) return;
 
-    setActionError('');
-    setStatusMessage('Submitting approval...');
+    showInfoToast('Submitting approval...');
     setIsApproving(true);
 
     try {
@@ -488,13 +493,12 @@ const App = () => {
       });
 
       setLastTxHash(hash);
-      setStatusMessage('Approval submitted. Waiting for confirmation...');
+      showInfoToast(`Approval submitted.\nTx: ${shortAddress(hash)}\nWaiting for confirmation...`);
       await publicClient.waitForTransactionReceipt({ hash });
-      setStatusMessage('Approval confirmed.');
+      showSuccessToast('Approval confirmed.');
       await refreshChainState();
     } catch (error) {
-      setActionError(getErrorMessage(error));
-      setStatusMessage('');
+      showErrorToast(getErrorMessage(error));
     } finally {
       setIsApproving(false);
     }
@@ -511,8 +515,7 @@ const App = () => {
 
     const actionLabel = isWrapPair ? (tokenIn.isNative ? 'Wrap' : 'Unwrap') : 'Swap';
 
-    setActionError('');
-    setStatusMessage(`Submitting ${actionLabel.toLowerCase()}...`);
+    showInfoToast(`Submitting ${actionLabel.toLowerCase()}...`);
     setIsSwapping(true);
 
     const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
@@ -570,16 +573,15 @@ const App = () => {
       }
 
       setLastTxHash(hash);
-      setStatusMessage(`${actionLabel} submitted. Waiting for confirmation...`);
+      showInfoToast(`${actionLabel} submitted.\nTx: ${shortAddress(hash)}\nWaiting for confirmation...`);
       await publicClient.waitForTransactionReceipt({ hash });
-      setStatusMessage(`${actionLabel} confirmed.`);
+      showSuccessToast(`${actionLabel} confirmed.`);
       setAmountInText('');
       setAmountOutText('');
       setQuotedOutRaw(0n);
       await refreshChainState();
     } catch (error) {
-      setActionError(getErrorMessage(error));
-      setStatusMessage('');
+      showErrorToast(getErrorMessage(error));
     } finally {
       setIsSwapping(false);
     }
@@ -785,9 +787,8 @@ const App = () => {
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
-        backgroundColor: 'rgba(242, 240, 248, 0.85)',
-        backdropFilter: 'blur(8px)',
-        paddingTop: 80,
+        backgroundColor: '#ece9f4',
+        paddingTop: 96,
         paddingBottom: 24,
         paddingLeft: 16,
         paddingRight: 16,
@@ -798,6 +799,7 @@ const App = () => {
         style={{
           width: '100%',
           maxWidth: 560,
+          marginTop: 16,
           backgroundColor: 'hsl(var(--bg--h, 252), var(--bg--s, 35%), 97%)',
           borderRadius: 24,
           padding: '28px 24px 24px',
@@ -973,8 +975,6 @@ const App = () => {
           <Uik.Button text={swapButtonLabel} fill={canSwap} size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
         )}
 
-        {statusMessage ? <p style={{ color: 'var(--success)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{statusMessage}</p> : null}
-        {actionError ? <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8, textAlign: 'center' }}>{actionError}</p> : null}
       </div>
     </div>
   );
@@ -983,9 +983,6 @@ const App = () => {
 
   const swapRouteView = (
     <>
-      <div style={{ pointerEvents: 'none', userSelect: 'none', opacity: 0.45, filter: 'blur(2px)' }}>
-        <TokensView />
-      </div>
       {swapStageView}
       <Uik.Modal
         className="connection-modal"
@@ -1159,20 +1156,29 @@ const App = () => {
         </div>
       </div>
 
-      <section className="mt-7 rounded-[28px] border border-[#e4deef] bg-white/45 px-5 py-4 md:px-6 md:py-5">
+      <section className="mt-6 rounded-[24px] border border-[#e4deef] bg-white/45 px-4 py-3.5 md:px-5 md:py-4">
         <div className="flex items-center justify-between gap-4">
-          <h2 className="text-[2rem] font-semibold leading-none text-[#1f2743]">My Pools</h2>
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-[18px] border border-[#eadff2] bg-[#f1eaf8] px-5 py-2.5 text-[1.05rem] font-semibold text-[#b13a8e]"
-          >
-            <Search className="h-5 w-5" />
-            Search
-          </button>
+          <h2 className="text-[1.45rem] font-semibold leading-none text-[#1f2743] md:text-[1.6rem]">My Pools</h2>
+          <div className="flex items-center gap-2">
+            <Uik.Button
+              fill
+              text="Swap"
+              size="small"
+              onClick={() => navigateRoute('swap')}
+              className="rounded-[14px] px-4"
+            />
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-[16px] border border-[#eadff2] bg-[#f1eaf8] px-4 py-2 text-[0.96rem] font-semibold text-[#b13a8e]"
+            >
+              <Search className="h-4.5 w-4.5" />
+              Search
+            </button>
+          </div>
         </div>
 
-        <div className="mt-5">
-          <div className="grid grid-cols-[minmax(260px,1.6fr)_minmax(140px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.9fr)_minmax(120px,0.9fr)_minmax(300px,1.2fr)] items-center gap-x-4 px-5 pb-3 text-[0.9rem] font-semibold text-[#202946]">
+        <div className="mt-4">
+          <div className="grid grid-cols-[minmax(220px,1.6fr)_minmax(120px,1fr)_minmax(100px,0.8fr)_minmax(100px,0.9fr)_minmax(110px,0.9fr)_minmax(250px,1.2fr)] items-center gap-x-3 px-4 pb-2 text-[0.82rem] font-semibold text-[#202946]">
             <span>Pair</span>
             <span className="text-center">My Liquidity</span>
             <span className="text-center">TVL</span>
@@ -1185,38 +1191,38 @@ const App = () => {
             {myPools.map((pool) => (
               <div
                 key={pool.id}
-                className="grid grid-cols-[minmax(260px,1.6fr)_minmax(140px,1fr)_minmax(120px,0.8fr)_minmax(120px,0.9fr)_minmax(120px,0.9fr)_minmax(300px,1.2fr)] items-center gap-x-4 rounded-[22px] bg-[#ece9f4] px-5 py-4"
+                className="grid grid-cols-[minmax(220px,1.6fr)_minmax(120px,1fr)_minmax(100px,0.8fr)_minmax(100px,0.9fr)_minmax(110px,0.9fr)_minmax(250px,1.2fr)] items-center gap-x-3 rounded-[18px] bg-[#ece9f4] px-4 py-3"
               >
                 <div className="flex items-center gap-3">
-                  <div className="relative h-10 w-[3.4rem] flex-shrink-0">
-                    <span className="absolute left-0 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
-                      <Uik.ReefIcon className="h-5 w-5" />
+                  <div className="relative h-9 w-[3rem] flex-shrink-0">
+                    <span className="absolute left-0 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
+                      <Uik.ReefIcon className="h-4.5 w-4.5" />
                     </span>
-                    <span className="absolute left-5 top-1/2 inline-flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-base font-bold text-[#574a75] shadow-sm">
+                    <span className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-sm font-bold text-[#574a75] shadow-sm">
                       R
                     </span>
                   </div>
-                  <span className="text-[1rem] font-semibold text-[#1f2743]">{pool.pair}</span>
+                  <span className="text-[0.95rem] font-semibold text-[#1f2743]">{pool.pair}</span>
                 </div>
 
-                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.myLiquidity}</span>
-                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.tvl}</span>
-                <span className="text-center text-[1rem] font-semibold text-[#1f2743]">{pool.volume24h}</span>
-                <span className="text-center text-[1rem] font-semibold text-[#2fad73]">▲ {pool.volume24hPct}</span>
+                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{pool.myLiquidity}</span>
+                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{pool.tvl}</span>
+                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{pool.volume24h}</span>
+                <span className="text-center text-[0.95rem] font-semibold text-[#2fad73]">▲ {pool.volume24hPct}</span>
 
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-4 py-2 text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-110"
+                    className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
                   >
-                    <Upload className="h-4 w-4" />
+                    <Upload className="h-3.5 w-3.5" />
                     Unstake
                   </button>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-[14px] bg-gradient-to-r from-[#a93185] to-[#6b33b4] px-4 py-2 text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-110"
+                    className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#6b33b4] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
                   >
-                    <Coins className="h-4 w-4" />
+                    <Coins className="h-3.5 w-3.5" />
                     Stake
                   </button>
                 </div>
@@ -1224,24 +1230,24 @@ const App = () => {
             ))}
           </div>
 
-          <div className="mt-5 flex justify-center">
-            <div className="inline-flex items-center gap-1 rounded-[18px] bg-[#e2dcea] p-2">
+          <div className="mt-4 flex justify-center">
+            <div className="inline-flex items-center gap-0.5 rounded-[16px] bg-[#e2dcea] p-1.5">
               <button
                 type="button"
-                className="h-11 min-w-11 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#7a32b4] px-4 text-[1rem] font-semibold text-white"
+                className="h-9 min-w-9 rounded-[10px] bg-gradient-to-r from-[#a93185] to-[#7a32b4] px-3 text-[0.95rem] font-semibold text-white"
               >
                 1
               </button>
               <button
                 type="button"
-                className="h-11 min-w-11 rounded-[12px] px-4 text-[1rem] font-semibold text-[#202946]"
+                className="h-9 min-w-9 rounded-[10px] px-3 text-[0.95rem] font-semibold text-[#202946]"
               >
                 2
               </button>
               <button
                 type="button"
                 aria-label="Next page"
-                className="h-11 min-w-11 rounded-[12px] px-4 text-[1.25rem] font-medium text-[#8f86a5]"
+                className="h-9 min-w-9 rounded-[10px] px-3 text-[1.1rem] font-medium text-[#8f86a5]"
               >
                 ›
               </button>
@@ -1303,11 +1309,10 @@ const App = () => {
             type="button"
             className="rounded-full bg-white/70 text-[#5d3bad] hover:bg-white hover:text-[#5d3bad] hover:scale-105 hover:shadow-md active:scale-95 shadow-sm text-sm font-medium px-4 py-2 transition-all duration-200 ease-out flex items-center gap-1.5"
             onClick={async () => {
-              setActionError('');
               try {
                 await addReefChain();
               } catch (error) {
-                setActionError(getErrorMessage(error));
+                showErrorToast(getErrorMessage(error));
               }
             }}
           >
