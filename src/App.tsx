@@ -574,14 +574,14 @@ const App = () => {
 
   return (
     <div className="app-shell">
-      <header className="navigation">
-        <div className="navigation__wrapper nav-content">
+      <header className="nav-content navigation d-flex d-flex-space-between">
+        <div className="navigation__wrapper">
           <div className="navigation__left">
             <button type="button" className="logo-btn">
               <Uik.ReefLogo className="navigation__logo" />
               <span className="navigation__logo-suffix">swap</span>
             </button>
-            <nav>
+            <nav className="d-flex justify-content-end d-flex-vert-center">
               <ul className="navigation_menu-items">
                 <li className="navigation_menu-items_menu-item navigation_menu-items_menu-item--active">
                   <button type="button" className="navigation_menu-items_menu-item_link">Tokens</button>
@@ -596,7 +596,7 @@ const App = () => {
             </nav>
           </div>
 
-          <div className="navigation__right">
+          <nav className="navigation__right d-flex d-flex-vert-center">
             <span className="network-chip">Reef ({reefChain.id})</span>
             {isConnected ? (
               <>
@@ -605,7 +605,7 @@ const App = () => {
                     <Uik.ReefIcon className="nav-account_icon" />
                     {formattedWalletReefBalance} REEF
                   </div>
-                  <button type="button" className="nav-account_button" onClick={() => disconnect()}>
+                  <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
                     Disconnect
                   </button>
                 </div>
@@ -623,7 +623,7 @@ const App = () => {
                 {isConnecting ? 'Connecting...' : 'Connect Wallet'}
               </button>
             )}
-          </div>
+          </nav>
         </div>
       </header>
 
