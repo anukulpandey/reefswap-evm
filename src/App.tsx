@@ -1156,17 +1156,10 @@ const App = () => {
         </div>
       </div>
 
-      <section className="mt-6 rounded-[24px] border border-[#e4deef] bg-white/45 px-4 py-3.5 md:px-5 md:py-4">
+      <section className="mt-6 rounded-[24px] border border-[#e4deef] bg-white px-4 py-3.5 md:px-5 md:py-4">
         <div className="flex items-center justify-between gap-4">
           <h2 className="text-[1.45rem] font-semibold leading-none text-[#1f2743] md:text-[1.6rem]">My Pools</h2>
-          <div className="flex items-center gap-2">
-            <Uik.Button
-              fill
-              text="Swap"
-              size="small"
-              onClick={() => navigateRoute('swap')}
-              className="rounded-[14px] px-4"
-            />
+          <div className="flex items-center">
             <button
               type="button"
               className="inline-flex items-center gap-1.5 rounded-[16px] border border-[#eadff2] bg-[#f1eaf8] px-4 py-2 text-[0.96rem] font-semibold text-[#b13a8e]"
