@@ -150,6 +150,7 @@ const App = () => {
   const [creatorStatus, setCreatorStatus] = useState('');
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
+  const isCompactHomeHeader = isConnected && activeRoute === 'tokens';
   const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
 
   const swapPath = useMemo(() => {
@@ -761,7 +762,7 @@ const App = () => {
   }, [lastTxHash]);
 
   const homeAssetPanelView = (
-    <aside className="asset-panel panel-card">
+    <aside className="asset-panel">
       <div className="asset-tabs">
         <button
           type="button"
@@ -797,6 +798,7 @@ const App = () => {
                 <small>{formattedReefTokenAmount} REEF</small>
               </div>
               <button type="button" className="send-btn" onClick={() => navigateRoute('swap')}>
+                <span className="send-btn__icon">✈</span>
                 Send
               </button>
             </div>
@@ -811,7 +813,7 @@ const App = () => {
   );
 
   const activityCardView = (
-    <section className="panel-card activity-card">
+    <section className="activity-card">
       <div className="activity-head">
         <h3>Activity</h3>
         <a className="activity-open-link" href={reefChain.blockExplorers.default.url} target="_blank" rel="noreferrer">
@@ -1230,49 +1232,70 @@ const App = () => {
     <div className="app-shell">
       <header className="nav-content navigation d-flex d-flex-space-between">
         <div className="navigation__wrapper">
-          <div className="navigation__left">
+          <div className={`navigation__left ${isCompactHomeHeader ? 'navigation__left--compact' : ''}`}>
             <button type="button" className="logo-btn" onClick={() => navigateRoute('tokens')}>
               <Uik.ReefLogo className="navigation__logo" />
-              <span className="navigation__logo-suffix">swap</span>
+              {!isCompactHomeHeader ? <span className="navigation__logo-suffix">swap</span> : null}
             </button>
-            <nav className="d-flex justify-content-end d-flex-vert-center">
-              <ul className="navigation_menu-items">
-                {NAV_ROUTES.map((item) => (
-                  <li
-                    key={item.route}
-                    className={`navigation_menu-items_menu-item ${activeRoute === item.route ? 'navigation_menu-items_menu-item--active' : ''}`}
-                  >
-                    <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute(item.route)}>
-                      {item.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </nav>
+            {!isCompactHomeHeader ? (
+              <nav className="d-flex justify-content-end d-flex-vert-center">
+                <ul className="navigation_menu-items">
+                  {NAV_ROUTES.map((item) => (
+                    <li
+                      key={item.route}
+                      className={`navigation_menu-items_menu-item ${activeRoute === item.route ? 'navigation_menu-items_menu-item--active' : ''}`}
+                    >
+                      <button type="button" className="navigation_menu-items_menu-item_link" onClick={() => navigateRoute(item.route)}>
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            ) : null}
           </div>
 
           <nav className="navigation__right d-flex d-flex-vert-center">
-            <span className="network-chip">Reef ({reefChain.id})</span>
             {isConnected ? (
-              <>
-                <div className="nav-account">
-                  <div className="nav-account_balance">
-                    <Uik.ReefIcon className="nav-account_icon" />
-                    {formattedWalletReefBalance} REEF
+              isCompactHomeHeader ? (
+                <>
+                  <div className="home-balance-chip">
+                    <Uik.ReefIcon className="home-balance-chip__icon" />
+                    <span>{formattedWalletReefBalance}</span>
                   </div>
-                </div>
-                <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
-                  Disconnect
-                </button>
-                <button
-                  type="button"
-                  className="wallet-pill wallet-pill--account"
-                  onClick={isWrongChain ? switchToReef : undefined}
-                  disabled={isWrongChain && isSwitching}
-                >
-                  {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : `Account  ${shortAddress(address)}`}
-                </button>
-              </>
+                  <button
+                    type="button"
+                    className="home-account-chip"
+                    onClick={isWrongChain ? switchToReef : undefined}
+                    disabled={isWrongChain && isSwitching}
+                  >
+                    <span className="home-account-chip__dot" />
+                    <span>{isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : 'Account'}</span>
+                    <span className="home-account-chip__caret">⌄</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="network-chip">Reef ({reefChain.id})</span>
+                  <div className="nav-account">
+                    <div className="nav-account_balance">
+                      <Uik.ReefIcon className="nav-account_icon" />
+                      {formattedWalletReefBalance} REEF
+                    </div>
+                  </div>
+                  <button type="button" className="btn nav-account_button" onClick={() => disconnect()}>
+                    Disconnect
+                  </button>
+                  <button
+                    type="button"
+                    className="wallet-pill wallet-pill--account"
+                    onClick={isWrongChain ? switchToReef : undefined}
+                    disabled={isWrongChain && isSwitching}
+                  >
+                    {isWrongChain ? (isSwitching ? 'Switching...' : 'Switch Network') : `Account  ${shortAddress(address)}`}
+                  </button>
+                </>
+              )
             ) : (
               <button type="button" className="wallet-connect-btn" onClick={connectWallet} disabled={isConnecting}>
                 {isConnecting ? 'Connecting...' : 'Connect Wallet'}
