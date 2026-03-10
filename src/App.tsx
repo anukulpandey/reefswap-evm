@@ -1893,10 +1893,10 @@ const App = () => {
     [selectedPoolId, subgraphPairs],
   );
   const getPairTokenDisplaySymbol = useCallback((token: { id: string; symbol: string }): string => (
-    sameAddress(token.id, wrappedReefAddress) ? 'REEF' : token.symbol
+    sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'WREEF' ? 'REEF' : token.symbol
   ), [wrappedReefAddress]);
   const isPairTokenReef = useCallback((token: { id: string; symbol: string }): boolean => (
-    sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF'
+    sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF' || token.symbol.toUpperCase() === 'WREEF'
   ), [wrappedReefAddress]);
 
   const poolsRouteView = (
@@ -2155,7 +2155,7 @@ const App = () => {
   );
 
   const chartRouteView = <ChartView onNavigate={navigateRoute} />;
-  const poolDetailRouteView = <PoolDetailPage pair={selectedPool} />;
+  const poolDetailRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} />;
 
   return (
     <div className="min-h-screen bg-background">

@@ -14,7 +14,7 @@ import {
 } from 'lightweight-charts';
 import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
 import { erc20Abi, reefswapRouterAbi } from '@/lib/abi';
-import { contracts, reefChain } from '@/lib/config';
+import { reefChain } from '@/lib/config';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from '@/lib/utils';
@@ -26,6 +26,7 @@ type Timeframe = '1h' | '1D' | '1W' | '1M';
 
 type PoolDetailPageProps = {
   pair: SubgraphPair | null;
+  wrappedTokenAddress: Address;
 };
 
 type ChartPoint = {
@@ -369,7 +370,7 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
   return <div className="pool-detail-chart__canvas" ref={chartContainerRef} />;
 };
 
-const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
+const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX.Element => {
   const { address, chainId, isConnected } = useAccount();
   const { connectors, connectAsync, isPending: isConnecting } = useConnect();
   const publicClient = usePublicClient({ chainId: reefChain.id });
@@ -405,10 +406,12 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
 
   const token0Address = pair?.token0.id || null;
   const token1Address = pair?.token1.id || null;
-  const token0IsCanonicalReef = sameAddress(token0Address, contracts.wrappedReef);
-  const token1IsCanonicalReef = sameAddress(token1Address, contracts.wrappedReef);
   const token0SymbolRaw = pair?.token0.symbol || 'REEF';
   const token1SymbolRaw = pair?.token1.symbol || 'TOKEN';
+  const token0SymbolUpper = token0SymbolRaw.toUpperCase();
+  const token1SymbolUpper = token1SymbolRaw.toUpperCase();
+  const token0IsCanonicalReef = sameAddress(token0Address, wrappedTokenAddress) || token0SymbolUpper === 'WREEF';
+  const token1IsCanonicalReef = sameAddress(token1Address, wrappedTokenAddress) || token1SymbolUpper === 'WREEF';
   const token0Symbol = token0IsCanonicalReef ? 'REEF' : token0SymbolRaw;
   const token1Symbol = token1IsCanonicalReef ? 'REEF' : token1SymbolRaw;
   const token0Decimals = Number.parseInt(pair?.token0.decimals || '18', 10);
