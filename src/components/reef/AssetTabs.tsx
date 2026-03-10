@@ -6,9 +6,10 @@ import { type TokenOption } from '@/lib/tokens';
 interface AssetTabsProps {
   onSwap?: () => void;
   tokenOptions: TokenOption[];
+  wrappedTokenAddress?: `0x${string}` | null;
 }
 
-const AssetTabs = ({ onSwap, tokenOptions }: AssetTabsProps) => {
+const AssetTabs = ({ onSwap, tokenOptions, wrappedTokenAddress }: AssetTabsProps) => {
   return (
     <Tabs defaultValue="tokens" className="w-full pl-6">
       <TabsList className="bg-transparent border-b border-border rounded-none w-full justify-start gap-4 h-auto p-0 mb-4">
@@ -27,7 +28,7 @@ const AssetTabs = ({ onSwap, tokenOptions }: AssetTabsProps) => {
       </TabsList>
 
       <TabsContent value="tokens">
-        <TokenList onSwap={onSwap} tokenOptions={tokenOptions} />
+        <TokenList onSwap={onSwap} tokenOptions={tokenOptions} wrappedTokenAddress={wrappedTokenAddress} />
       </TabsContent>
  
       <TabsContent value="nfts" className="pt-6">

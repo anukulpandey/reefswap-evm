@@ -19,6 +19,7 @@ import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 interface TokenListProps {
   onSwap?: () => void;
   tokenOptions: TokenOption[];
+  wrappedTokenAddress?: `0x${string}` | null;
 }
 
 const toFinite = (value: string): number => {
@@ -39,7 +40,7 @@ const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?:
   applyFallbackTokenIcon(event.currentTarget, address, symbol);
 };
 
-const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
+const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps) => {
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [balancesByTokenKey, setBalancesByTokenKey] = useState<Record<string, number>>({});
@@ -120,7 +121,8 @@ const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
         const key = tokenKey(token);
         const chainBalance = balancesByTokenKey[key];
         const balance = token.isNative ? reefBalance : (chainBalance ?? 0);
-        const isReefLike = token.isNative || sameAddress(token.address, contracts.wrappedReef);
+        const resolvedWrappedAddress = wrappedTokenAddress || contracts.wrappedReef;
+        const isReefLike = token.isNative || sameAddress(token.address, resolvedWrappedAddress);
         const price = isReefLike ? reefPrice : 0;
 
         return {
@@ -138,7 +140,7 @@ const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
           isNative: token.isNative,
         } satisfies Token;
       }),
-    [balancesByTokenKey, change24h, portfolioTokenOptions, reefBalance, reefPrice],
+    [balancesByTokenKey, change24h, portfolioTokenOptions, reefBalance, reefPrice, wrappedTokenAddress],
   );
 
   const visibleTokens = useMemo(() => {

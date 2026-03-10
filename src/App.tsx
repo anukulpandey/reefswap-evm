@@ -148,7 +148,15 @@ const addEthereumChainParams = {
   blockExplorerUrls: [reefChain.blockExplorers.default.url],
 };
 
-const TokensView = ({ onSwap, tokens }: { onSwap?: () => void; tokens: TokenOption[] }) => {
+const TokensView = ({
+  onSwap,
+  tokens,
+  wrappedTokenAddress,
+}: {
+  onSwap?: () => void;
+  tokens: TokenOption[];
+  wrappedTokenAddress: Address;
+}) => {
   const { address } = useAccount();
   const { balance: reefBalance, isLoading: isBalanceLoading } = useReefBalance(address);
   const { price: reefPrice } = useReefPrice();
@@ -166,7 +174,7 @@ const TokensView = ({ onSwap, tokens }: { onSwap?: () => void; tokens: TokenOpti
       </section>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <AssetTabs onSwap={onSwap} tokenOptions={tokens} />
+          <AssetTabs onSwap={onSwap} tokenOptions={tokens} wrappedTokenAddress={wrappedTokenAddress} />
         </div>
         <div className="lg:col-span-1">
           <ActivityPanel />
@@ -198,7 +206,8 @@ const App = () => {
   const [walletNativeBalance, setWalletNativeBalance] = useState<bigint>(0n);
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [routerWrappedToken, setRouterWrappedToken] = useState<Address>(contracts.wrappedReef);
-  const [routerWrappedTokenSource, setRouterWrappedTokenSource] = useState<'loading' | 'router' | 'fallback'>('loading');
+  const [routerWrappedTokenSource, setRouterWrappedTokenSource] = useState<'loading' | 'router' | 'fallback' | 'subgraph'>('loading');
+  const [isWrappedTokenContractMissing, setIsWrappedTokenContractMissing] = useState(false);
 
   const [isQuoting, setIsQuoting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -238,6 +247,10 @@ const App = () => {
   }, []);
 
   const wrappedReefAddress = routerWrappedTokenSource === 'loading' ? contracts.wrappedReef : routerWrappedToken;
+  const subgraphWrappedTokenAddress = useMemo(() => {
+    const candidate = subgraphTokens.find((token) => token.symbol?.toUpperCase() === 'WREEF' && isAddress(token.id));
+    return candidate ? getAddress(candidate.id) : null;
+  }, [subgraphTokens]);
   const wrappedTokenOption = useMemo<TokenOption>(() => ({
     symbol: 'WREEF',
     name: 'Wrapped Reef',
@@ -482,6 +495,54 @@ const App = () => {
   }, [publicClient]);
 
   useEffect(() => {
+    if (!publicClient || routerWrappedTokenSource === 'loading') {
+      setIsWrappedTokenContractMissing(false);
+      return;
+    }
+
+    let isActive = true;
+
+    const validateWrappedToken = async () => {
+      try {
+        const currentCode = await publicClient.getCode({ address: wrappedReefAddress });
+        const hasCurrentCode = Boolean(currentCode && currentCode !== '0x');
+        if (!isActive) return;
+
+        if (hasCurrentCode) {
+          setIsWrappedTokenContractMissing(false);
+          return;
+        }
+
+        if (
+          subgraphWrappedTokenAddress &&
+          !sameAddress(subgraphWrappedTokenAddress, wrappedReefAddress)
+        ) {
+          const candidateCode = await publicClient.getCode({ address: subgraphWrappedTokenAddress });
+          if (!isActive) return;
+
+          if (candidateCode && candidateCode !== '0x') {
+            setRouterWrappedToken(subgraphWrappedTokenAddress);
+            setRouterWrappedTokenSource('subgraph');
+            setIsWrappedTokenContractMissing(false);
+            return;
+          }
+        }
+
+        setIsWrappedTokenContractMissing(true);
+      } catch {
+        if (!isActive) return;
+        setIsWrappedTokenContractMissing(false);
+      }
+    };
+
+    validateWrappedToken();
+
+    return () => {
+      isActive = false;
+    };
+  }, [publicClient, routerWrappedTokenSource, subgraphWrappedTokenAddress, wrappedReefAddress]);
+
+  useEffect(() => {
     refreshChainState().catch(() => {
       // no-op
     });
@@ -641,6 +702,14 @@ const App = () => {
       return;
     }
 
+    if (isWrapPair) {
+      const wrappedCode = await publicClient.getCode({ address: wrappedReefAddress });
+      if (!wrappedCode || wrappedCode === '0x') {
+        showErrorToast(`Wrapped token contract not found at ${wrappedReefAddress}. Update VITE_WREEF_ADDRESS or router deployment config.`);
+        return;
+      }
+    }
+
     const actionLabel = isWrapPair ? (tokenIn.isNative ? 'Wrap' : 'Unwrap') : 'Swap';
 
     showInfoToast(`Submitting ${actionLabel.toLowerCase()}...`);
@@ -792,6 +861,7 @@ const App = () => {
   const canSwap =
     isConnected &&
     !isWrongChain &&
+    (!isWrapPair || (!isWrappedTokenContractMissing && routerWrappedTokenSource !== 'loading')) &&
     parsedAmountIn > 0n &&
     quotedOutRaw > 0n &&
     !hasInsufficientBalance &&
@@ -823,9 +893,13 @@ const App = () => {
     : hasInsufficientBalance
       ? `Insufficient ${tokenIn.symbol}`
       : isWrapPair
-        ? tokenIn.isNative
-          ? 'Wrap Now'
-          : 'Unwrap Now'
+        ? routerWrappedTokenSource === 'loading'
+          ? 'Loading Wrapped Token...'
+          : isWrappedTokenContractMissing
+            ? 'Wrapped Token Unavailable'
+            : tokenIn.isNative
+              ? 'Wrap Now'
+              : 'Unwrap Now'
         : 'Swap Now';
 
   const activityRows = useMemo(() => {
@@ -1107,7 +1181,13 @@ const App = () => {
     </div>
   );
 
-  const tokensRouteView = <TokensView onSwap={() => navigateRoute('swap')} tokens={tokens} />;
+  const tokensRouteView = (
+    <TokensView
+      onSwap={() => navigateRoute('swap')}
+      tokens={tokens}
+      wrappedTokenAddress={wrappedReefAddress}
+    />
+  );
 
   const swapRouteView = (
     <>
@@ -1135,6 +1215,12 @@ const App = () => {
           </ul>
           {routerWrappedTokenSource === 'fallback' ? (
             <p className="note">Router `WETH()` call failed on this RPC; using configured WrappedREEF fallback.</p>
+          ) : null}
+          {routerWrappedTokenSource === 'subgraph' ? (
+            <p className="note">Configured WrappedREEF had no contract code, switched to subgraph-indexed WrappedREEF.</p>
+          ) : null}
+          {isWrappedTokenContractMissing ? (
+            <p className="note">WrappedREEF address has no deployed contract code on current RPC.</p>
           ) : null}
         </div>
       </Uik.Modal>
