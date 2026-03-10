@@ -339,6 +339,10 @@
   color: #9f9ab2;
 }
 
+.pool-actions .uik-pool-actions-token__value input:not([readonly]) {
+  color: #a328ab;
+}
+
 .pool-actions .uik-pool-actions__summary {
   margin-top: 20px;
 }
@@ -376,6 +380,57 @@
   flex: 1 1 auto;
   margin: 0;
   padding-left: 6px;
+}
+
+.pool-actions__coming-soon {
+  margin-top: 34px;
+  border-radius: 14px;
+  background: #e6e2f1;
+  padding: 18px 16px;
+  color: #7f7a92;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.pool-actions__quote-error,
+.pool-actions__quote-note {
+  margin: 12px 4px 0;
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.pool-actions__quote-error {
+  color: #b24471;
+}
+
+.pool-actions__quote-note {
+  color: #7a7195;
+}
+
+.pool-actions__stake-note {
+  margin: 32px 8px 26px;
+  text-align: center;
+  color: #4d5672;
+  font-size: clamp(1.05rem, 2.2vw, 1.6rem);
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.pool-actions__stake-summary {
+  margin-top: 20px;
+}
+
+.pool-actions__stake-slider {
+  margin: 40px 0 34px;
+}
+
+.pool-actions__unstake-section {
+  min-height: 640px;
+}
+
+.pool-actions__unstake-slider {
+  margin: 54px 0 34px;
 }
 
 .pool-token-avatar {

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
-import { faArrowsRotate, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+import { faArrowUpFromBracket, faArrowsRotate, faCoins, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+import { useAccount, useConnect, usePublicClient, useSwitchChain, useWalletClient } from 'wagmi';
+import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import {
   AreaSeries,
   HistogramSeries,
@@ -11,9 +13,11 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
-import { contracts } from '@/lib/config';
+import { erc20Abi, reefswapRouterAbi } from '@/lib/abi';
+import { contracts, reefChain } from '@/lib/config';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
+import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from '@/lib/utils';
 import './pool-detail.css';
 
 type ActionTab = 'trade' | 'stake' | 'unstake';
@@ -30,9 +34,18 @@ type ChartPoint = {
 };
 
 type AggregationMode = 'last' | 'sum';
+type TradeToken = {
+  symbol: string;
+  decimals: number;
+  address: Address | null;
+  icon: string;
+  isCanonicalReef: boolean;
+};
 
 const CHART_SAMPLE_SIZE = 500;
 const SWAP_FEE_RATE = 0.003;
+const MAX_APPROVAL = (2n ** 256n) - 1n;
+const TX_DEADLINE_SECONDS = 60 * 20;
 const AMOUNT_SLIDER_HELPERS = [
   { position: 0, text: '0%' },
   { position: 25 },
@@ -70,6 +83,18 @@ const asNumber = (value: string | number | null | undefined): number => {
 
 const sameAddress = (a: string | null | undefined, b: string | null | undefined): boolean =>
   String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
+const trimDecimalString = (value: string): string => {
+  if (!value.includes('.')) return value;
+  const trimmed = value.replace(/\.?0+$/, '');
+  return trimmed === '' ? '0' : trimmed;
+};
+
+const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint => {
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  const amountInWithFee = amountIn * 997n;
+  return (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
+};
 
 const asTimestamp = (value: string | number | null | undefined): number => {
   const timestamp = Math.trunc(asNumber(value));
@@ -345,11 +370,33 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
 };
 
 const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
+  const { address, chainId, isConnected } = useAccount();
+  const { connectors, connectAsync, isPending: isConnecting } = useConnect();
+  const publicClient = usePublicClient({ chainId: reefChain.id });
+  const { data: walletClient } = useWalletClient();
+  const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
-  const tradePercentage = 0;
-  const slippagePercentage = 0.8;
+  const [isTradeReversed, setIsTradeReversed] = useState(false);
+  const [amountInText, setAmountInText] = useState('');
+  const [amountOutText, setAmountOutText] = useState('');
+  const [slippagePercentage, setSlippagePercentage] = useState(0.8);
+  const [stakePercentage, setStakePercentage] = useState(0);
+  const [unstakePercentage, setUnstakePercentage] = useState(0);
+  const [quotedOutRaw, setQuotedOutRaw] = useState<bigint>(0n);
+  const [balanceIn, setBalanceIn] = useState<bigint>(0n);
+  const [balanceOut, setBalanceOut] = useState<bigint>(0n);
+  const [allowance, setAllowance] = useState<bigint>(0n);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
+  const [isSwapping, setIsSwapping] = useState(false);
+  const [quoteError, setQuoteError] = useState('');
+  const [quoteNote, setQuoteNote] = useState('');
+  const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
+
   const {
     data: pairTransactions,
     isLoading: isChartLoading,
@@ -360,10 +407,39 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const token1Symbol = pair?.token1.symbol || 'TOKEN';
   const token0Address = pair?.token0.id || null;
   const token1Address = pair?.token1.id || null;
+  const token0Decimals = Number.parseInt(pair?.token0.decimals || '18', 10);
+  const token1Decimals = Number.parseInt(pair?.token1.decimals || '18', 10);
+  const token0SafeDecimals = Number.isInteger(token0Decimals) ? token0Decimals : 18;
+  const token1SafeDecimals = Number.isInteger(token1Decimals) ? token1Decimals : 18;
+  const token0NormalizedAddress = token0Address && isAddress(token0Address) ? getAddress(token0Address) : null;
+  const token1NormalizedAddress = token1Address && isAddress(token1Address) ? getAddress(token1Address) : null;
   const token0IsCanonicalReef = sameAddress(token0Address, contracts.wrappedReef);
   const token1IsCanonicalReef = sameAddress(token1Address, contracts.wrappedReef);
   const token0Icon = resolveTokenIconUrl({ address: token0Address, symbol: token0Symbol, iconUrl: null });
   const token1Icon = resolveTokenIconUrl({ address: token1Address, symbol: token1Symbol, iconUrl: null });
+  const tradeToken0: TradeToken = {
+    symbol: token0Symbol,
+    decimals: token0SafeDecimals,
+    address: token0NormalizedAddress,
+    icon: token0Icon,
+    isCanonicalReef: token0IsCanonicalReef,
+  };
+  const tradeToken1: TradeToken = {
+    symbol: token1Symbol,
+    decimals: token1SafeDecimals,
+    address: token1NormalizedAddress,
+    icon: token1Icon,
+    isCanonicalReef: token1IsCanonicalReef,
+  };
+  const inputToken = isTradeReversed ? tradeToken1 : tradeToken0;
+  const outputToken = isTradeReversed ? tradeToken0 : tradeToken1;
+  const isWrongChain = isConnected && chainId !== reefChain.id;
+  const hasTradePair = Boolean(inputToken.address && outputToken.address && !sameAddress(inputToken.address, outputToken.address));
+  const swapPath = useMemo(() => (
+    hasTradePair
+      ? [inputToken.address as Address, outputToken.address as Address]
+      : [] as Address[]
+  ), [hasTradePair, inputToken.address, outputToken.address]);
   const reserve0 = asNumber(pair?.reserve0);
   const reserve1 = asNumber(pair?.reserve1);
   const reserveTotal = reserve0 + reserve1;
@@ -393,6 +469,342 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
 
   const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
   const txSummaryText = 'Show Transactions';
+  const parsedAmountIn = useMemo(() => {
+    if (!amountInText) return 0n;
+    try {
+      return parseUnits(amountInText, inputToken.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [amountInText, inputToken.decimals]);
+  const clampedSlippage = useMemo(() => Math.max(0, Math.min(20, slippagePercentage)), [slippagePercentage]);
+  const parsedSlippageBps = useMemo(() => BigInt(Math.round(clampedSlippage * 100)), [clampedSlippage]);
+  const minOut = useMemo(() => {
+    if (quotedOutRaw <= 0n) return 0n;
+    const discount = (quotedOutRaw * parsedSlippageBps) / 10_000n;
+    return quotedOutRaw - discount;
+  }, [parsedSlippageBps, quotedOutRaw]);
+  const hasInsufficientBalance = parsedAmountIn > balanceIn;
+  const requiresApproval = parsedAmountIn > 0n && allowance < parsedAmountIn;
+  const amountSliderValue = useMemo(() => {
+    if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
+    const basisPoints = Number((parsedAmountIn * 10_000n) / balanceIn);
+    return Math.max(0, Math.min(100, basisPoints / 100));
+  }, [balanceIn, parsedAmountIn]);
+  const tradePercentage = amountSliderValue;
+  const slippageSliderValue = Math.max(0, Math.min(100, Math.round(clampedSlippage * 5)));
+  const formattedBalanceIn = formatDisplayAmount(balanceIn, inputToken.decimals);
+  const formattedBalanceOut = formatDisplayAmount(balanceOut, outputToken.decimals);
+  const dynamicRate = useMemo(() => {
+    if (parsedAmountIn <= 0n || quotedOutRaw <= 0n) return 0;
+    const inValue = asNumber(formatUnits(parsedAmountIn, inputToken.decimals));
+    const outValue = asNumber(formatUnits(quotedOutRaw, outputToken.decimals));
+    if (inValue <= 0 || outValue <= 0) return 0;
+    return outValue / inValue;
+  }, [inputToken.decimals, outputToken.decimals, parsedAmountIn, quotedOutRaw]);
+  const rateText = dynamicRate > 0
+    ? `1 ${inputToken.symbol} = ${formatRate(dynamicRate)} ${outputToken.symbol}`
+    : (
+      isTradeReversed
+        ? `1 ${token1Symbol} = ${formatRate(pair?.token1Price)} ${token0Symbol}`
+        : `1 ${token0Symbol} = ${formatRate(pair?.token0Price)} ${token1Symbol}`
+    );
+  const canSwap = actionTab === 'trade' &&
+    isConnected &&
+    !isWrongChain &&
+    hasTradePair &&
+    parsedAmountIn > 0n &&
+    quotedOutRaw > 0n &&
+    !isQuoting &&
+    !isRefreshing &&
+    !hasInsufficientBalance &&
+    !quoteError;
+  const tradeButtonLabel = !isConnected
+    ? (isConnecting ? 'Connecting...' : 'Connect Wallet')
+    : isWrongChain
+      ? (isSwitching ? 'Switching...' : 'Switch To Reef Chain')
+      : isSwapping
+        ? 'Swapping...'
+        : hasInsufficientBalance
+          ? `Insufficient ${inputToken.symbol}`
+          : requiresApproval
+            ? (isApproving ? 'Approving...' : `Approve ${inputToken.symbol}`)
+            : quoteError
+              ? 'No Route Found'
+              : `Swap ${inputToken.symbol}`;
+  const stakeBalanceToken0 = useMemo(() => {
+    if (!tradeToken0.address) return 0n;
+    if (inputToken.address && sameAddress(tradeToken0.address, inputToken.address)) return balanceIn;
+    if (outputToken.address && sameAddress(tradeToken0.address, outputToken.address)) return balanceOut;
+    return 0n;
+  }, [balanceIn, balanceOut, inputToken.address, outputToken.address, tradeToken0.address]);
+  const stakeBalanceToken1 = useMemo(() => {
+    if (!tradeToken1.address) return 0n;
+    if (inputToken.address && sameAddress(tradeToken1.address, inputToken.address)) return balanceIn;
+    if (outputToken.address && sameAddress(tradeToken1.address, outputToken.address)) return balanceOut;
+    return 0n;
+  }, [balanceIn, balanceOut, inputToken.address, outputToken.address, tradeToken1.address]);
+  const stakeAmountToken0Raw = useMemo(() => {
+    if (stakePercentage <= 0 || stakeBalanceToken0 <= 0n) return 0n;
+    const basisPoints = BigInt(Math.round(stakePercentage * 100));
+    return (stakeBalanceToken0 * basisPoints) / 10_000n;
+  }, [stakeBalanceToken0, stakePercentage]);
+  const stakeAmountToken0 = useMemo(
+    () => trimDecimalString(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals)),
+    [stakeAmountToken0Raw, tradeToken0.decimals],
+  );
+  const stakeAmountToken1 = useMemo(() => {
+    const amount0 = asNumber(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals));
+    const price = asNumber(pair?.token0Price);
+    if (amount0 <= 0 || price <= 0) return '0.0';
+    return trimDecimalString((amount0 * price).toFixed(6));
+  }, [pair?.token0Price, stakeAmountToken0Raw, tradeToken0.decimals]);
+  const stakeTotalUsd = useMemo(() => {
+    const usdPerToken0 = reserve0 > 0 ? asNumber(pair?.reserveUSD) / reserve0 : 0;
+    const usdPerToken1 = reserve1 > 0 ? asNumber(pair?.reserveUSD) / reserve1 : 0;
+    const amount0 = asNumber(stakeAmountToken0);
+    const amount1 = asNumber(stakeAmountToken1);
+    return Math.max(0, (amount0 * usdPerToken0) + (amount1 * usdPerToken1));
+  }, [pair?.reserveUSD, reserve0, reserve1, stakeAmountToken0, stakeAmountToken1]);
+  const stakeButtonLabel = stakeAmountToken0Raw > 0n ? 'Stake Now' : `Missing ${tradeToken0.symbol} amount`;
+  const stakeFormattedBalanceToken0 = formatDisplayAmount(stakeBalanceToken0, tradeToken0.decimals);
+  const stakeFormattedBalanceToken1 = formatDisplayAmount(stakeBalanceToken1, tradeToken1.decimals);
+  const formattedStakeTotal = `$${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(stakeTotalUsd)}`;
+  const unstakeValueUsd = 0;
+  const formattedUnstakeValue = `$${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(unstakeValueUsd)}`;
+
+  const clearTradeQuote = useCallback(() => {
+    setAmountOutText('');
+    setQuotedOutRaw(0n);
+    setQuoteError('');
+    setQuoteNote('');
+    setIsQuoting(false);
+  }, []);
+
+  const refreshTradeState = useCallback(async () => {
+    if (!publicClient || !address || !inputToken.address || !outputToken.address || !hasTradePair) {
+      setBalanceIn(0n);
+      setBalanceOut(0n);
+      setAllowance(0n);
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      const [nextBalanceIn, nextBalanceOut, nextAllowance] = await Promise.all([
+        publicClient.readContract({
+          address: inputToken.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [address],
+        }).catch(() => 0n),
+        publicClient.readContract({
+          address: outputToken.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [address],
+        }).catch(() => 0n),
+        publicClient.readContract({
+          address: inputToken.address,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, contracts.router],
+        }).catch(() => 0n),
+      ]);
+      setBalanceIn(nextBalanceIn);
+      setBalanceOut(nextBalanceOut);
+      setAllowance(nextAllowance);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [address, hasTradePair, inputToken.address, outputToken.address, publicClient]);
+
+  useEffect(() => {
+    refreshTradeState().catch(() => {
+      setIsRefreshing(false);
+    });
+  }, [refreshTradeState]);
+
+  useEffect(() => {
+    setIsTradeReversed(false);
+    setStakePercentage(0);
+    setUnstakePercentage(0);
+    clearTradeQuote();
+    setAmountInText('');
+  }, [clearTradeQuote, pair?.id]);
+
+  useEffect(() => {
+    if (actionTab !== 'trade') return;
+    if (parsedAmountIn <= 0n) {
+      clearTradeQuote();
+      return;
+    }
+    if (!publicClient || !hasTradePair || swapPath.length < 2) {
+      clearTradeQuote();
+      return;
+    }
+
+    setIsQuoting(true);
+    setQuoteError('');
+    setQuoteNote('');
+
+    const timer = setTimeout(() => {
+      publicClient
+        .readContract({
+          address: contracts.router,
+          abi: reefswapRouterAbi,
+          functionName: 'getAmountsOut',
+          args: [parsedAmountIn, swapPath],
+        })
+        .then((amounts) => {
+          const output = amounts[amounts.length - 1];
+          setQuotedOutRaw(output);
+          setAmountOutText(formatDisplayAmount(output, outputToken.decimals, 8));
+        })
+        .catch(() => {
+          try {
+            if (!pair || !token0NormalizedAddress || !token1NormalizedAddress || !inputToken.address) {
+              throw new Error('no fallback pair');
+            }
+            const reserve0Raw = parseUnits(pair.reserve0, token0SafeDecimals);
+            const reserve1Raw = parseUnits(pair.reserve1, token1SafeDecimals);
+            const inputIsToken0 = sameAddress(inputToken.address, token0NormalizedAddress);
+            const reserveIn = inputIsToken0 ? reserve0Raw : reserve1Raw;
+            const reserveOut = inputIsToken0 ? reserve1Raw : reserve0Raw;
+            const output = getAmountOut(parsedAmountIn, reserveIn, reserveOut);
+            if (output <= 0n) throw new Error('insufficient output');
+            setQuotedOutRaw(output);
+            setAmountOutText(formatDisplayAmount(output, outputToken.decimals, 8));
+            setQuoteNote('Router quote unavailable; using pool reserve fallback.');
+            setQuoteError('');
+          } catch {
+            clearTradeQuote();
+            setQuoteError('No route found for this pair and amount.');
+          }
+        })
+        .finally(() => setIsQuoting(false));
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [
+    actionTab,
+    clearTradeQuote,
+    hasTradePair,
+    inputToken.address,
+    outputToken.decimals,
+    pair,
+    parsedAmountIn,
+    publicClient,
+    swapPath,
+    token0NormalizedAddress,
+    token0SafeDecimals,
+    token1NormalizedAddress,
+    token1SafeDecimals,
+  ]);
+
+  const setAmountByPercent = (percent: number) => {
+    const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+    if (balanceIn <= 0n || safePercent <= 0) {
+      setAmountInText(safePercent === 0 ? '0' : '');
+      return;
+    }
+    const basisPoints = BigInt(Math.round(safePercent * 100));
+    const raw = (balanceIn * basisPoints) / 10_000n;
+    setAmountInText(trimDecimalString(formatUnits(raw, inputToken.decimals)));
+  };
+
+  const setSlippageFromSlider = (position: number) => {
+    const percentage = Math.max(0, Math.min(20, position / 5));
+    setSlippagePercentage(percentage);
+  };
+
+  const onSwitchTradeTokens = () => {
+    setIsTradeReversed((current) => !current);
+    setAmountInText('');
+    clearTradeQuote();
+  };
+
+  const connectWallet = async () => {
+    const connector = connectors.find((item) => item.id === 'metaMask') || connectors[0];
+    if (!connector) {
+      Uik.notify.danger({ message: 'No injected wallet connector found. Install MetaMask first.' });
+      return;
+    }
+    try {
+      await connectAsync({ connector });
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    }
+  };
+
+  const switchToReef = async () => {
+    try {
+      await switchChainAsync({ chainId: reefChain.id });
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    }
+  };
+
+  const approve = async () => {
+    if (!walletClient || !publicClient || !address || !inputToken.address || !hasTradePair) return;
+
+    setIsApproving(true);
+    Uik.notify.info({ message: 'Submitting approval...' });
+    try {
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: inputToken.address,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [contracts.router, MAX_APPROVAL],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Approval submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: 'Approval confirmed.' });
+      await refreshTradeState();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const swap = async () => {
+    if (!walletClient || !publicClient || !address || !hasTradePair || parsedAmountIn <= 0n || quotedOutRaw <= 0n) return;
+
+    setIsSwapping(true);
+    Uik.notify.info({ message: 'Submitting swap...' });
+    try {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: contracts.router,
+        abi: reefswapRouterAbi,
+        functionName: 'swapExactTokensForTokens',
+        args: [parsedAmountIn, minOut, swapPath, address, deadline],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Swap submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: 'Swap confirmed.' });
+      setAmountInText('');
+      clearTradeQuote();
+      await refreshTradeState();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsSwapping(false);
+    }
+  };
 
   const chartPoints = useMemo<ChartPoint[]>(() => {
     if (!pair) return [];
@@ -497,7 +909,6 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
 
   const latestChartPoint = chartPoints[chartPoints.length - 1];
   const latestChartValue = latestChartPoint?.value ?? 0;
-  const slippageSliderValue = Math.min(100, Math.max(0, (slippagePercentage / 20) * 100));
 
   return (
     <div className="pool">
@@ -607,106 +1018,255 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
             />
           </div>
 
-          <div className="uik-pool-actions__tokens">
-            <div className="uik-pool-actions-token">
-              <div className="uik-pool-actions-token__token">
-                <div className={`uik-pool-actions-token__image pool-token-avatar ${token0IsCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
-                  {token0IsCanonicalReef ? (
-                    <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
-                  ) : (
-                    <>
-                      {token0Icon ? (
-                        <img src={token0Icon} alt={token0Symbol} className="pool-token-avatar__img" />
-                      ) : (
-                        <span className="pool-token-avatar__fallback">{token0Symbol.slice(0, 1)}</span>
-                      )}
-                    </>
-                  )}
+          {actionTab === 'trade' ? (
+            <div className="uik-pool-actions__tokens">
+              <div className="uik-pool-actions-token">
+                <div className="uik-pool-actions-token__token">
+                  <div className={`uik-pool-actions-token__image pool-token-avatar ${inputToken.isCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                    {inputToken.isCanonicalReef ? (
+                      <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                    ) : (
+                      <>
+                        {inputToken.icon ? (
+                          <img src={inputToken.icon} alt={inputToken.symbol} className="pool-token-avatar__img" />
+                        ) : (
+                          <span className="pool-token-avatar__fallback">{inputToken.symbol.slice(0, 1)}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="uik-pool-actions-token__info">
+                    <div className="uik-pool-actions-token__symbol">{inputToken.symbol}</div>
+                    <div className="uik-pool-actions-token__amount">{formattedBalanceIn} {inputToken.symbol}</div>
+                  </div>
                 </div>
-                <div className="uik-pool-actions-token__info">
-                  <div className="uik-pool-actions-token__symbol">{token0Symbol}</div>
-                  <div className="uik-pool-actions-token__amount">{formatTokenAmount(reserve0)} {token0Symbol}</div>
+                <div className="uik-pool-actions-token__value">
+                  <input
+                    value={amountInText}
+                    onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
+                    inputMode="decimal"
+                    placeholder="0.0"
+                  />
                 </div>
               </div>
-              <div className="uik-pool-actions-token__value">
-                <input value="0.0" readOnly />
-              </div>
-            </div>
 
-            <div className="pool-actions__switch-slider-row">
-              <div className="uik-pool-actions__token-switch">
-                <button type="button" className="uik-pool-actions__token-switch-btn" aria-label="Switch assets">
-                  <Uik.Icon icon={faArrowsRotate} />
-                </button>
+              <div className="pool-actions__switch-slider-row">
+                <div className="uik-pool-actions__token-switch">
+                  <button type="button" className="uik-pool-actions__token-switch-btn" aria-label="Switch assets" onClick={onSwitchTradeTokens}>
+                    <Uik.Icon icon={faArrowsRotate} />
+                  </button>
+                </div>
+                <div className="uik-pool-actions__slider">
+                  <Uik.Slider
+                    value={tradePercentage}
+                    helpers={AMOUNT_SLIDER_HELPERS}
+                    tooltip={`${tradePercentage.toFixed(2)}%`}
+                    onChange={setAmountByPercent}
+                  />
+                </div>
               </div>
+
+              <div className="uik-pool-actions-token">
+                <div className="uik-pool-actions-token__token">
+                  <div className={`uik-pool-actions-token__image pool-token-avatar ${outputToken.isCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                    {outputToken.isCanonicalReef ? (
+                      <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                    ) : (
+                      <>
+                        {outputToken.icon ? (
+                          <img src={outputToken.icon} alt={outputToken.symbol} className="pool-token-avatar__img" />
+                        ) : (
+                          <span className="pool-token-avatar__fallback">{outputToken.symbol.slice(0, 1)}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="uik-pool-actions-token__info">
+                    <div className="uik-pool-actions-token__symbol">{outputToken.symbol}</div>
+                    <div className="uik-pool-actions-token__amount">{formattedBalanceOut} {outputToken.symbol}</div>
+                  </div>
+                </div>
+                <div className="uik-pool-actions-token__value">
+                  <input value={amountOutText} readOnly placeholder={isQuoting ? '...' : '0.0'} />
+                </div>
+              </div>
+
+              <div className="uik-pool-actions__summary uik-pool-actions__trade-summary">
+                <div className="uik-pool-actions__summary-item">
+                  <div className="uik-pool-actions__summary-item-label">Rate</div>
+                  <div className="uik-pool-actions__summary-item-value">{rateText}</div>
+                </div>
+                <div className="uik-pool-actions__summary-item">
+                  <div className="uik-pool-actions__summary-item-label">Fee</div>
+                  <div className="uik-pool-actions__summary-item-value">0.3%</div>
+                </div>
+                <div className="uik-pool-actions__summary-item">
+                  <div className="uik-pool-actions__summary-item-label">Slippage</div>
+                  <div className="uik-pool-actions__summary-item-value">{clampedSlippage.toFixed(1)}%</div>
+                </div>
+              </div>
+
+              {quoteError ? <p className="pool-actions__quote-error">{quoteError}</p> : null}
+              {!quoteError && quoteNote ? <p className="pool-actions__quote-note">{quoteNote}</p> : null}
+              {lastTxHash ? <p className="pool-actions__quote-note">Last tx: {shortAddress(lastTxHash)}</p> : null}
+
               <div className="uik-pool-actions__slider">
                 <Uik.Slider
-                  value={tradePercentage}
-                  helpers={AMOUNT_SLIDER_HELPERS}
-                  tooltip={`${tradePercentage}%`}
-                  onChange={() => {}}
+                  value={slippageSliderValue}
+                  steps={1}
+                  helpers={SLIPPAGE_SLIDER_HELPERS}
+                  tooltip={`${clampedSlippage.toFixed(1)}%`}
+                  onChange={setSlippageFromSlider}
                 />
               </div>
-            </div>
 
-            <div className="uik-pool-actions-token">
-              <div className="uik-pool-actions-token__token">
-                <div className={`uik-pool-actions-token__image pool-token-avatar ${token1IsCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
-                  {token1IsCanonicalReef ? (
-                    <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
-                  ) : (
-                    <>
-                      {token1Icon ? (
-                        <img src={token1Icon} alt={token1Symbol} className="pool-token-avatar__img" />
-                      ) : (
-                        <span className="pool-token-avatar__fallback">{token1Symbol.slice(0, 1)}</span>
-                      )}
-                    </>
-                  )}
+              {!isConnected ? (
+                <Uik.Button
+                  className="uik-pool-actions__cta"
+                  text={tradeButtonLabel}
+                  icon={faArrowsRotate}
+                  fill
+                  disabled={isConnecting}
+                  onClick={connectWallet}
+                />
+              ) : isWrongChain ? (
+                <Uik.Button
+                  className="uik-pool-actions__cta"
+                  text={tradeButtonLabel}
+                  fill
+                  disabled={isSwitching}
+                  onClick={switchToReef}
+                />
+              ) : requiresApproval ? (
+                <Uik.Button
+                  className="uik-pool-actions__cta"
+                  text={tradeButtonLabel}
+                  fill
+                  disabled={isApproving || parsedAmountIn <= 0n || hasInsufficientBalance || isRefreshing || !hasTradePair}
+                  onClick={approve}
+                />
+              ) : (
+                <Uik.Button
+                  className="uik-pool-actions__cta"
+                  text={tradeButtonLabel}
+                  icon={faArrowsRotate}
+                  fill
+                  disabled={!canSwap || isSwapping}
+                  onClick={swap}
+                />
+              )}
+            </div>
+          ) : actionTab === 'stake' ? (
+            <div className="uik-pool-actions__tokens">
+              <p className="pool-actions__stake-note">
+                Earn trading fees on this liquidity pool by staking your tokens into it.
+              </p>
+
+              <div className="uik-pool-actions-token">
+                <div className="uik-pool-actions-token__token">
+                  <div className={`uik-pool-actions-token__image pool-token-avatar ${tradeToken0.isCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                    {tradeToken0.isCanonicalReef ? (
+                      <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                    ) : (
+                      <>
+                        {tradeToken0.icon ? (
+                          <img src={tradeToken0.icon} alt={tradeToken0.symbol} className="pool-token-avatar__img" />
+                        ) : (
+                          <span className="pool-token-avatar__fallback">{tradeToken0.symbol.slice(0, 1)}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="uik-pool-actions-token__info">
+                    <div className="uik-pool-actions-token__symbol">{tradeToken0.symbol}</div>
+                    <div className="uik-pool-actions-token__amount">{stakeFormattedBalanceToken0} {tradeToken0.symbol}</div>
+                  </div>
                 </div>
-                <div className="uik-pool-actions-token__info">
-                  <div className="uik-pool-actions-token__symbol">{token1Symbol}</div>
-                  <div className="uik-pool-actions-token__amount">{formatTokenAmount(reserve1)} {token1Symbol}</div>
+                <div className="uik-pool-actions-token__value">
+                  <input value={stakeAmountToken0} readOnly />
                 </div>
               </div>
-              <div className="uik-pool-actions-token__value">
-                <input value="0.0" readOnly />
-              </div>
-            </div>
 
-            <div className="uik-pool-actions__summary uik-pool-actions__trade-summary">
-              <div className="uik-pool-actions__summary-item">
-                <div className="uik-pool-actions__summary-item-label">Rate</div>
-                <div className="uik-pool-actions__summary-item-value">1 {token0Symbol} = {formatRate(pair?.token0Price)} {token1Symbol}</div>
+              <div className="uik-pool-actions-token">
+                <div className="uik-pool-actions-token__token">
+                  <div className={`uik-pool-actions-token__image pool-token-avatar ${tradeToken1.isCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                    {tradeToken1.isCanonicalReef ? (
+                      <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                    ) : (
+                      <>
+                        {tradeToken1.icon ? (
+                          <img src={tradeToken1.icon} alt={tradeToken1.symbol} className="pool-token-avatar__img" />
+                        ) : (
+                          <span className="pool-token-avatar__fallback">{tradeToken1.symbol.slice(0, 1)}</span>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div className="uik-pool-actions-token__info">
+                    <div className="uik-pool-actions-token__symbol">{tradeToken1.symbol}</div>
+                    <div className="uik-pool-actions-token__amount">{stakeFormattedBalanceToken1} {tradeToken1.symbol}</div>
+                  </div>
+                </div>
+                <div className="uik-pool-actions-token__value">
+                  <input value={stakeAmountToken1} readOnly />
+                </div>
               </div>
-              <div className="uik-pool-actions__summary-item">
-                <div className="uik-pool-actions__summary-item-label">Fee</div>
-                <div className="uik-pool-actions__summary-item-value">0.3%</div>
-              </div>
-              <div className="uik-pool-actions__summary-item">
-                <div className="uik-pool-actions__summary-item-label">Slippage</div>
-                <div className="uik-pool-actions__summary-item-value">{slippagePercentage.toFixed(1)}%</div>
-              </div>
-            </div>
 
-            <div className="uik-pool-actions__slider">
-              <Uik.Slider
-                value={slippageSliderValue}
-                helpers={SLIPPAGE_SLIDER_HELPERS}
-                tooltip={`${slippagePercentage.toFixed(1)}%`}
-                onChange={() => {}}
+              <div className="uik-pool-actions__summary pool-actions__stake-summary">
+                <div className={`uik-pool-actions__summary-item ${stakeTotalUsd <= 0 ? 'uik-pool-actions__summary-item--empty' : ''}`}>
+                  <div className="uik-pool-actions__summary-item-label">Total</div>
+                  <div className="uik-pool-actions__summary-item-value">{formattedStakeTotal}</div>
+                </div>
+              </div>
+
+              <div className="uik-pool-actions__slider pool-actions__stake-slider">
+                <Uik.Slider
+                  value={stakePercentage}
+                  helpers={AMOUNT_SLIDER_HELPERS}
+                  tooltip={`${stakePercentage.toFixed(2)}%`}
+                  onChange={(position: number) => setStakePercentage(position)}
+                />
+              </div>
+
+              <Uik.Button
+                className="uik-pool-actions__cta"
+                text={stakeButtonLabel}
+                icon={faCoins}
+                fill
+                disabled
+                onClick={() => {}}
               />
             </div>
+          ) : (
+            <div className="uik-pool-actions__tokens pool-actions__unstake-section">
+              <div className={`uik-pool-actions__withdraw-preview ${unstakeValueUsd <= 0 ? 'uik-pool-actions__withdraw-preview--empty' : ''}`}>
+                <div className="uik-pool-actions__withdraw-percentage">
+                  <span className="uik-pool-actions__withdraw-percentage-value">{Math.round(unstakePercentage)}</span>
+                  <span className="uik-pool-actions__withdraw-percentage-sign">%</span>
+                </div>
+                <div className="uik-pool-actions__withdraw-value">{formattedUnstakeValue}</div>
+              </div>
 
-            <Uik.Button
-              className="uik-pool-actions__cta"
-              text={`Missing ${token0Symbol} amount`}
-              icon={faArrowsRotate}
-              fill
-              disabled
-              onClick={() => {}}
-            />
-          </div>
+              <div className="uik-pool-actions__slider pool-actions__unstake-slider">
+                <Uik.Slider
+                  value={unstakePercentage}
+                  stickyHelpers={false}
+                  helpers={AMOUNT_SLIDER_HELPERS}
+                  tooltip={`${unstakePercentage.toFixed(0)}%`}
+                  onChange={(position: number) => setUnstakePercentage(position)}
+                />
+              </div>
+
+              <Uik.Button
+                className="uik-pool-actions__cta"
+                text="Insufficient pool balance"
+                icon={faArrowUpFromBracket}
+                fill
+                disabled
+                onClick={() => {}}
+              />
+            </div>
+          )}
         </div>
 
         <div className="pool-chart">
