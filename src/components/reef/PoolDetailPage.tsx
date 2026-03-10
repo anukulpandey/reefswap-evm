@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
-import { ArrowLeftRight } from 'lucide-react';
 import { faArrowsRotate, faRightLeft } from '@fortawesome/free-solid-svg-icons';
 import {
   AreaSeries,
@@ -12,6 +11,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
+import { contracts } from '@/lib/config';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 import './pool-detail.css';
@@ -33,6 +33,21 @@ type AggregationMode = 'last' | 'sum';
 
 const CHART_SAMPLE_SIZE = 500;
 const SWAP_FEE_RATE = 0.003;
+const AMOUNT_SLIDER_HELPERS = [
+  { position: 0, text: '0%' },
+  { position: 25 },
+  { position: 50, text: '50%' },
+  { position: 75 },
+  { position: 100, text: '100%' },
+];
+
+const SLIPPAGE_SLIDER_HELPERS = [
+  { position: 0, text: '0%' },
+  { position: 25 },
+  { position: 50, text: '10%' },
+  { position: 75 },
+  { position: 100, text: '20%' },
+];
 
 const TIMEFRAME_LOOKBACK_SECONDS: Record<Timeframe, number> = {
   '1h': 60 * 60,
@@ -52,6 +67,9 @@ const asNumber = (value: string | number | null | undefined): number => {
   const parsed = Number.parseFloat(String(value ?? '0'));
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const sameAddress = (a: string | null | undefined, b: string | null | undefined): boolean =>
+  String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 const asTimestamp = (value: string | number | null | undefined): number => {
   const timestamp = Math.trunc(asNumber(value));
@@ -330,6 +348,8 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
+  const tradePercentage = 0;
+  const slippagePercentage = 0.8;
   const {
     data: pairTransactions,
     isLoading: isChartLoading,
@@ -340,6 +360,8 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const token1Symbol = pair?.token1.symbol || 'TOKEN';
   const token0Address = pair?.token0.id || null;
   const token1Address = pair?.token1.id || null;
+  const token0IsCanonicalReef = sameAddress(token0Address, contracts.wrappedReef);
+  const token1IsCanonicalReef = sameAddress(token1Address, contracts.wrappedReef);
   const token0Icon = resolveTokenIconUrl({ address: token0Address, symbol: token0Symbol, iconUrl: null });
   const token1Icon = resolveTokenIconUrl({ address: token1Address, symbol: token1Symbol, iconUrl: null });
   const reserve0 = asNumber(pair?.reserve0);
@@ -475,6 +497,7 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
 
   const latestChartPoint = chartPoints[chartPoints.length - 1];
   const latestChartValue = latestChartPoint?.value ?? 0;
+  const slippageSliderValue = Math.min(100, Math.max(0, (slippagePercentage / 20) * 100));
 
   return (
     <div className="pool">
@@ -584,71 +607,102 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
             />
           </div>
 
-          <div className="pool-actions__panel">
-            <div className="pool-token-input">
-              <div className="pool-token-input__left">
-                <span className="pool-icon pool-icon--reef">
-                  <Uik.ReefIcon className="pool-icon__reef-mark" />
-                </span>
-                <div>
-                  <p className="pool-token-input__symbol">{token0Symbol}</p>
-                  <p className="pool-token-input__balance">{formatTokenAmount(reserve0)} {token0Symbol}</p>
+          <div className="uik-pool-actions__tokens">
+            <div className="uik-pool-actions-token">
+              <div className="uik-pool-actions-token__token">
+                <div className={`uik-pool-actions-token__image pool-token-avatar ${token0IsCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                  {token0IsCanonicalReef ? (
+                    <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                  ) : (
+                    <>
+                      {token0Icon ? (
+                        <img src={token0Icon} alt={token0Symbol} className="pool-token-avatar__img" />
+                      ) : (
+                        <span className="pool-token-avatar__fallback">{token0Symbol.slice(0, 1)}</span>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="uik-pool-actions-token__info">
+                  <div className="uik-pool-actions-token__symbol">{token0Symbol}</div>
+                  <div className="uik-pool-actions-token__amount">{formatTokenAmount(reserve0)} {token0Symbol}</div>
                 </div>
               </div>
-              <p className="pool-token-input__amount">0.0</p>
-            </div>
-
-            <div className="pool-slider-block">
-              <button type="button" className="pool-slider-switch-btn" aria-label="Switch assets">
-                <ArrowLeftRight size={18} />
-              </button>
-              <div className="pool-slider-track-wrap">
-                <span className="pool-slider-badge">0%</span>
-                <div className="pool-slider-track">
-                  <span className="pool-slider-track__fill" style={{ width: '2%' }} />
-                  {[0, 1, 2, 3, 4].map((dot) => (
-                    <span key={dot} className={`pool-slider-track__dot ${dot === 0 ? 'is-active' : ''}`} />
-                  ))}
-                </div>
-                <div className="pool-slider-track__labels">
-                  <span>0%</span>
-                  <span>50%</span>
-                  <span>100%</span>
-                </div>
+              <div className="uik-pool-actions-token__value">
+                <input value="0.0" readOnly />
               </div>
             </div>
 
-            <div className="pool-token-input">
-              <div className="pool-token-input__left">
-                <span className="pool-icon pool-icon--flpr">{token1Symbol.slice(0, 1)}</span>
-                <div>
-                  <p className="pool-token-input__symbol">{token1Symbol}</p>
-                  <p className="pool-token-input__balance">{formatTokenAmount(reserve1)} {token1Symbol}</p>
+            <div className="pool-actions__switch-slider-row">
+              <div className="uik-pool-actions__token-switch">
+                <button type="button" className="uik-pool-actions__token-switch-btn" aria-label="Switch assets">
+                  <Uik.Icon icon={faArrowsRotate} />
+                </button>
+              </div>
+              <div className="uik-pool-actions__slider">
+                <Uik.Slider
+                  value={tradePercentage}
+                  helpers={AMOUNT_SLIDER_HELPERS}
+                  tooltip={`${tradePercentage}%`}
+                  onChange={() => {}}
+                />
+              </div>
+            </div>
+
+            <div className="uik-pool-actions-token">
+              <div className="uik-pool-actions-token__token">
+                <div className={`uik-pool-actions-token__image pool-token-avatar ${token1IsCanonicalReef ? 'pool-token-avatar--reef' : ''}`}>
+                  {token1IsCanonicalReef ? (
+                    <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                  ) : (
+                    <>
+                      {token1Icon ? (
+                        <img src={token1Icon} alt={token1Symbol} className="pool-token-avatar__img" />
+                      ) : (
+                        <span className="pool-token-avatar__fallback">{token1Symbol.slice(0, 1)}</span>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div className="uik-pool-actions-token__info">
+                  <div className="uik-pool-actions-token__symbol">{token1Symbol}</div>
+                  <div className="uik-pool-actions-token__amount">{formatTokenAmount(reserve1)} {token1Symbol}</div>
                 </div>
               </div>
-              <p className="pool-token-input__amount">0.0</p>
-            </div>
-
-            <div className="pool-trade-meta">
-              <div><span>Rate</span><strong>1 {token0Symbol} = {formatRate(pair?.token0Price)} {token1Symbol}</strong></div>
-              <div><span>Fee</span><strong>0.3%</strong></div>
-              <div><span>Slippage</span><strong>0.8%</strong></div>
-            </div>
-
-            <div className="pool-slider-track-wrap pool-slider-track-wrap--slippage">
-              <span className="pool-slider-badge">0.8%</span>
-              <div className="pool-slider-track">
-                <span className="pool-slider-track__fill" style={{ width: '5%' }} />
-                {[0, 1, 2, 3, 4].map((dot) => (
-                  <span key={dot} className={`pool-slider-track__dot ${dot === 0 ? 'is-active' : ''}`} />
-                ))}
+              <div className="uik-pool-actions-token__value">
+                <input value="0.0" readOnly />
               </div>
+            </div>
+
+            <div className="uik-pool-actions__summary uik-pool-actions__trade-summary">
+              <div className="uik-pool-actions__summary-item">
+                <div className="uik-pool-actions__summary-item-label">Rate</div>
+                <div className="uik-pool-actions__summary-item-value">1 {token0Symbol} = {formatRate(pair?.token0Price)} {token1Symbol}</div>
+              </div>
+              <div className="uik-pool-actions__summary-item">
+                <div className="uik-pool-actions__summary-item-label">Fee</div>
+                <div className="uik-pool-actions__summary-item-value">0.3%</div>
+              </div>
+              <div className="uik-pool-actions__summary-item">
+                <div className="uik-pool-actions__summary-item-label">Slippage</div>
+                <div className="uik-pool-actions__summary-item-value">{slippagePercentage.toFixed(1)}%</div>
+              </div>
+            </div>
+
+            <div className="uik-pool-actions__slider">
+              <Uik.Slider
+                value={slippageSliderValue}
+                helpers={SLIPPAGE_SLIDER_HELPERS}
+                tooltip={`${slippagePercentage.toFixed(1)}%`}
+                onChange={() => {}}
+              />
             </div>
 
             <Uik.Button
-              className="pool-actions__swap-btn"
+              className="uik-pool-actions__cta"
               text={`Missing ${token0Symbol} amount`}
               icon={faArrowsRotate}
+              fill
               disabled
               onClick={() => {}}
             />
