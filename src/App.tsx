@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import {
   useAccount,
@@ -8,7 +8,7 @@ import {
   useSwitchChain,
   useWalletClient,
 } from 'wagmi';
-import { Coins, Search, Upload } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronDown, Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import { erc20Abi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
@@ -275,6 +275,8 @@ const App = () => {
     return parseRouteLocation(window.location).poolRef;
   });
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
+  const [openTokenMenu, setOpenTokenMenu] = useState<'in' | 'out' | null>(null);
+  const swapCardRef = useRef<HTMLDivElement | null>(null);
 
   const {
     data: subgraphPairs = [],
@@ -392,6 +394,98 @@ const App = () => {
       return current;
     });
   }, [routerWrappedTokenSource, wrappedReefAddress, wrappedTokenOption]);
+
+  const poolTokenAddressSet = useMemo(() => {
+    const lookup = new Set<string>();
+    subgraphPairs.forEach((pair) => {
+      if (isAddress(pair.token0.id)) lookup.add(pair.token0.id.toLowerCase());
+      if (isAddress(pair.token1.id)) lookup.add(pair.token1.id.toLowerCase());
+    });
+    return lookup;
+  }, [subgraphPairs]);
+
+  const poolPairAddressSet = useMemo(() => {
+    const lookup = new Set<string>();
+    subgraphPairs.forEach((pair) => {
+      if (!isAddress(pair.token0.id) || !isAddress(pair.token1.id)) return;
+      const a = pair.token0.id.toLowerCase();
+      const b = pair.token1.id.toLowerCase();
+      lookup.add(`${a}-${b}`);
+      lookup.add(`${b}-${a}`);
+    });
+    return lookup;
+  }, [subgraphPairs]);
+
+  const hasDirectPool = useCallback((addressA: Address, addressB: Address) => (
+    poolPairAddressSet.has(`${addressA.toLowerCase()}-${addressB.toLowerCase()}`)
+  ), [poolPairAddressSet]);
+
+  const hasAnyPoolForToken = useCallback((token: TokenOption): boolean => {
+    if (token.isNative) return true;
+    if (!token.address) return false;
+    if (sameAddress(token.address, wrappedReefAddress)) return true;
+    return poolTokenAddressSet.has(token.address.toLowerCase());
+  }, [poolTokenAddressSet, wrappedReefAddress]);
+
+  const canSwapBetweenTokens = useCallback((from: TokenOption, to: TokenOption): boolean => {
+    if (dedupeTokenKey(from) === dedupeTokenKey(to)) return false;
+    if (isWrapPairSelection(from, to, wrappedReefAddress)) return true;
+
+    const inputAddress = from.isNative ? wrappedReefAddress : from.address;
+    const outputAddress = to.isNative ? wrappedReefAddress : to.address;
+    if (!inputAddress || !outputAddress || sameAddress(inputAddress, outputAddress)) return false;
+
+    if (!from.isNative && !to.isNative) {
+      if (sameAddress(inputAddress, wrappedReefAddress) || sameAddress(outputAddress, wrappedReefAddress)) {
+        return hasDirectPool(inputAddress, outputAddress);
+      }
+      return hasDirectPool(inputAddress, wrappedReefAddress) && hasDirectPool(wrappedReefAddress, outputAddress);
+    }
+
+    return hasDirectPool(inputAddress, outputAddress);
+  }, [hasDirectPool, wrappedReefAddress]);
+
+  const inputTokenOptions = useMemo(() => {
+    const filtered = tokens.filter((token) => hasAnyPoolForToken(token));
+    return filtered.length ? filtered : tokens;
+  }, [hasAnyPoolForToken, tokens]);
+
+  const outputTokenOptions = useMemo(() => {
+    return tokens.filter((token) => canSwapBetweenTokens(tokenIn, token));
+  }, [canSwapBetweenTokens, tokenIn, tokens]);
+
+  useEffect(() => {
+    if (!inputTokenOptions.length) return;
+    const hasCurrent = inputTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(tokenIn));
+    if (hasCurrent) return;
+    setTokenIn(inputTokenOptions[0]);
+  }, [inputTokenOptions, tokenIn]);
+
+  useEffect(() => {
+    if (!outputTokenOptions.length) return;
+    const hasCurrent = outputTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(tokenOut));
+    if (hasCurrent) return;
+    setTokenOut(outputTokenOptions[0]);
+  }, [outputTokenOptions, tokenOut]);
+
+  useEffect(() => {
+    if (!openTokenMenu) return;
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (swapCardRef.current && swapCardRef.current.contains(event.target as Node)) return;
+      setOpenTokenMenu(null);
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenTokenMenu(null);
+    };
+
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [openTokenMenu]);
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const isWrapPair = useMemo(
@@ -967,6 +1061,7 @@ const App = () => {
   const onSwitchTokens = () => {
     setTokenIn(tokenOut);
     setTokenOut(tokenIn);
+    setOpenTokenMenu(null);
     setAmountInText('');
     setAmountOutText('');
     setQuoteError('');
@@ -1180,6 +1275,7 @@ const App = () => {
       }}
     >
       <div
+        ref={swapCardRef}
         style={{
           width: '100%',
           maxWidth: 560,
@@ -1191,21 +1287,8 @@ const App = () => {
         }}
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
           <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', margin: 0 }}>Swap</h2>
-          <button
-            type="button"
-            onClick={() => navigateRoute('tokens')}
-            style={{
-              width: 36, height: 36, borderRadius: '50%',
-              background: 'hsl(var(--bg--h, 252), var(--bg--s, 25%), 92%)',
-              border: 'none', cursor: 'pointer', fontSize: 22,
-              color: 'var(--text)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              lineHeight: 1,
-            }}
-          >
-            ×
-          </button>
         </div>
 
         {/* FROM token row */}
@@ -1217,7 +1300,7 @@ const App = () => {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
-            <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
+            <div style={{ width: 48, height: 48, flexShrink: 0 }}>
               {tokenIn.isNative ? (
                 <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
@@ -1227,23 +1310,79 @@ const App = () => {
                   {tokenIn.symbol.charAt(0)}
                 </div>
               )}
-              <select
-                value={tokenIn.isNative ? 'native' : tokenIn.address || ''}
-                onChange={(e) => {
-                  const tok = tokens.find((t) => (t.isNative ? 'native' : t.address || '') === e.target.value);
-                  if (tok) setTokenIn(tok);
-                }}
-                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', borderRadius: '50%', width: '100%', height: '100%' }}
-              >
-                {tokens.map((t) => {
-                  const k = t.isNative ? 'native' : t.address || '';
-                  return <option key={k} value={k}>{t.symbol}</option>;
-                })}
-              </select>
             </div>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 18, color: 'var(--text)', lineHeight: 1.2 }}>{tokenIn.symbol}</div>
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setOpenTokenMenu((current) => (current === 'in' ? null : 'in'))}
+                style={{
+                  border: '1px solid #d9caec',
+                  borderRadius: 10,
+                  background: '#f7f2ff',
+                  color: 'var(--text)',
+                  fontWeight: 700,
+                  fontSize: 18,
+                  lineHeight: 1.1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 9px',
+                  cursor: 'pointer',
+                }}
+              >
+                <span>{tokenIn.symbol}</span>
+                <ChevronDown size={15} color="#83789a" />
+              </button>
               <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceIn} {tokenIn.symbol}</div>
+              {openTokenMenu === 'in' ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    left: 0,
+                    zIndex: 80,
+                    minWidth: 190,
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                    borderRadius: 12,
+                    border: '1px solid #d4c7e8',
+                    background: '#f4effb',
+                    boxShadow: '0 16px 30px rgba(86, 63, 138, 0.18)',
+                    padding: 6,
+                  }}
+                >
+                  {inputTokenOptions.map((token) => {
+                    const isActive = dedupeTokenKey(token) === dedupeTokenKey(tokenIn);
+                    return (
+                      <button
+                        key={dedupeTokenKey(token)}
+                        type="button"
+                        onClick={() => {
+                          setTokenIn(token);
+                          setOpenTokenMenu(null);
+                        }}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          borderRadius: 8,
+                          background: isActive ? 'rgba(120, 66, 178, 0.14)' : 'transparent',
+                          color: '#4b3e67',
+                          padding: '8px 10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          fontSize: 18,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span>{token.symbol}</span>
+                        {isActive ? <Check size={16} color="#7c36b8" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
           </div>
           <input
@@ -1281,7 +1420,7 @@ const App = () => {
               color: '#fff', fontSize: 20, boxShadow: '0 2px 10px rgba(93, 59, 173, 0.4)',
             }}
           >
-            ⇄
+            <ArrowUpDown size={20} />
           </button>
           <div style={{ flex: 1 }}>
             <Uik.Slider
@@ -1302,27 +1441,89 @@ const App = () => {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
-            <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
+            <div style={{ width: 48, height: 48, flexShrink: 0 }}>
               <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
                 {tokenOut.isNative ? <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} /> : tokenOut.symbol.charAt(0)}
               </div>
-              <select
-                value={tokenOut.isNative ? 'native' : tokenOut.address || ''}
-                onChange={(e) => {
-                  const tok = tokens.find((t) => (t.isNative ? 'native' : t.address || '') === e.target.value);
-                  if (tok) setTokenOut(tok);
-                }}
-                style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', borderRadius: '50%', width: '100%', height: '100%' }}
-              >
-                {tokens.map((t) => {
-                  const k = t.isNative ? 'native' : t.address || '';
-                  return <option key={k} value={k}>{t.symbol}</option>;
-                })}
-              </select>
             </div>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 16, color: 'var(--text)', lineHeight: 1.2 }}>{tokenOut.symbol}</div>
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                disabled={!outputTokenOptions.length}
+                onClick={() => setOpenTokenMenu((current) => (current === 'out' ? null : 'out'))}
+                style={{
+                  border: '1px solid #d9caec',
+                  borderRadius: 10,
+                  background: '#f7f2ff',
+                  color: 'var(--text)',
+                  fontWeight: 700,
+                  fontSize: 16,
+                  lineHeight: 1.1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 9px',
+                  cursor: outputTokenOptions.length ? 'pointer' : 'not-allowed',
+                  opacity: outputTokenOptions.length ? 1 : 0.65,
+                }}
+              >
+                <span>{tokenOut.symbol}</span>
+                <ChevronDown size={15} color="#83789a" />
+              </button>
               <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceOut} {tokenOut.symbol}</div>
+              {openTokenMenu === 'out' ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    left: 0,
+                    zIndex: 80,
+                    minWidth: 190,
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                    borderRadius: 12,
+                    border: '1px solid #d4c7e8',
+                    background: '#f4effb',
+                    boxShadow: '0 16px 30px rgba(86, 63, 138, 0.18)',
+                    padding: 6,
+                  }}
+                >
+                  {outputTokenOptions.length ? outputTokenOptions.map((token) => {
+                    const isActive = dedupeTokenKey(token) === dedupeTokenKey(tokenOut);
+                    return (
+                      <button
+                        key={dedupeTokenKey(token)}
+                        type="button"
+                        onClick={() => {
+                          setTokenOut(token);
+                          setOpenTokenMenu(null);
+                        }}
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          borderRadius: 8,
+                          background: isActive ? 'rgba(120, 66, 178, 0.14)' : 'transparent',
+                          color: '#4b3e67',
+                          padding: '8px 10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          fontSize: 18,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <span>{token.symbol}</span>
+                        {isActive ? <Check size={16} color="#7c36b8" /> : null}
+                      </button>
+                    );
+                  }) : (
+                    <div style={{ padding: '8px 10px', color: '#8b819f', fontSize: 14, fontWeight: 600 }}>
+                      No swappable tokens
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
           <input
@@ -1382,11 +1583,11 @@ const App = () => {
 
         {/* Action button */}
         {isWrongChain ? (
-          <Uik.Button text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'} fill size="large" disabled={isSwitching} onClick={switchToReef} />
+          <Uik.Button className="swap-action-btn" text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'} fill size="large" disabled={isSwitching} onClick={switchToReef} />
         ) : requiresApproval ? (
-          <Uik.Button text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
+          <Uik.Button className="swap-action-btn" text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
         ) : (
-          <Uik.Button text={swapButtonLabel} fill={canSwap} size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
+          <Uik.Button className="swap-action-btn" text={swapButtonLabel} fill size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
         )}
 
       </div>

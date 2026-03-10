@@ -927,6 +927,24 @@ input {
   cursor: not-allowed;
 }
 
+.swap-action-btn {
+  width: 100%;
+  border-radius: 16px !important;
+  box-shadow: 0 10px 20px rgb(117 60 176 / 22%);
+  font-size: 1.08rem !important;
+  font-weight: 700 !important;
+}
+
+.swap-action-btn.uik-button--fill:not(.uik-button--disabled) {
+  background: linear-gradient(90deg, #b02f8f, #6c3bb7) !important;
+}
+
+.swap-action-btn.uik-button--disabled {
+  background: #d2ccdf !important;
+  color: #8f89a3 !important;
+  box-shadow: none;
+}
+
 .creator {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
