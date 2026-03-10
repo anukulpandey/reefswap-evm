@@ -7,6 +7,7 @@ const REEF_DECIMALS = 18;
 
 export interface ReefTransaction {
   id: string;
+  txHash: string | null;
   type: 'sent' | 'received';
   amount: number;
   symbol: string;
@@ -131,6 +132,7 @@ export function useReefTransactions(address: string | undefined) {
 
             return {
               id: `native:${tx.hash}`,
+              txHash: tx.hash,
               type: isSent ? 'sent' : 'received',
               amount: toFiniteNumber(valueRaw, REEF_DECIMALS),
               symbol: 'REEF',
@@ -162,6 +164,7 @@ export function useReefTransactions(address: string | undefined) {
 
             return {
               id: `erc20:${transfer.transaction_hash || 'unknown'}:${String(transfer.log_index ?? index)}`,
+              txHash: transfer.transaction_hash || null,
               type: fromLower === lowerAddress ? 'sent' : 'received',
               amount,
               symbol,

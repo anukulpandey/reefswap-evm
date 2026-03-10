@@ -11,7 +11,7 @@ const ActivityPanel = () => {
   const { address } = useAccount();
   const { transactions, isLoading } = useReefTransactions(address);
   const { explorerUrl } = useReefExplorer(address);
-  const txExplorerUrl = (hash: string) => `${explorerUrl}/tx/${encodeURIComponent(hash)}`;
+  const txExplorerUrl = (hash: string) => `${explorerUrl}/tx/${hash}`;
 
   const formatAmount = (value: number) => {
     const absolute = Math.abs(value);
@@ -62,14 +62,55 @@ const ActivityPanel = () => {
         ) : (
           transactions.map((tx, index) => (
             <div key={tx.id}>
-              <a
-                href={txExplorerUrl(tx.id)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block"
-              >
+              {tx.txHash ? (
+                <a
+                  href={txExplorerUrl(tx.txHash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block"
+                >
+                  <div
+                    className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
+                      index === 0 ? 'rounded-t-3xl' : ''
+                    } ${index === transactions.length - 1 ? 'rounded-b-3xl' : ''}`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
+                        {tx.type === 'sent' ? (
+                          <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
+                        ) : (
+                          <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-base font-semibold text-[#1b1530]">
+                          {tx.type === 'sent' ? `Sent ${tx.symbol}` : `Received ${tx.symbol}`}
+                        </p>
+                        <p className="text-sm font-medium text-[#8e899c]">
+                          {tx.date} · {tx.time}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="text-base font-semibold text-[#a8a4b3]">
+                        {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
+                      </span>
+                      {showBalances && (
+                        tx.symbol === 'REEF' ? (
+                          <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
+                        ) : (
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">
+                            {tx.symbol.slice(0, 1)}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </a>
+              ) : (
                 <div
-                  className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
+                  className={`flex items-center justify-between px-6 py-5 ${
                     index === 0 ? 'rounded-t-3xl' : ''
                   } ${index === transactions.length - 1 ? 'rounded-b-3xl' : ''}`}
                 >
@@ -106,7 +147,7 @@ const ActivityPanel = () => {
                     )}
                   </div>
                 </div>
-              </a>
+              )}
               {index < transactions.length - 1 && (
                 <div className="mx-6 h-px bg-[#ebe6f4]" />
               )}
