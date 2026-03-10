@@ -40,6 +40,25 @@ type ExplorerTransactionsResponse = {
   items?: ExplorerTransaction[];
 };
 
+type ExplorerAddressTokenTransfer = {
+  transaction_hash?: string | null;
+  from?: ExplorerAddressRef | null;
+  to?: ExplorerAddressRef | null;
+  total?: { value?: string | null; decimals?: string | number | null } | null;
+  token?: { symbol?: string | null } | null;
+  timestamp?: string | null;
+  log_index?: number | null;
+  token_type?: string | null;
+};
+
+type ExplorerAddressTokenTransfersResponse = {
+  items?: ExplorerAddressTokenTransfer[];
+};
+
+type MappedTransaction = ReefTransaction & {
+  timestampMs: number;
+};
+
 const toBigIntSafe = (value: unknown): bigint => {
   if (typeof value !== 'string' || value.trim() === '') return 0n;
   try {
@@ -52,6 +71,20 @@ const toBigIntSafe = (value: unknown): bigint => {
 const toFiniteNumber = (value: bigint, decimals: number): number => {
   const normalized = Number.parseFloat(formatUnits(value, decimals));
   return Number.isFinite(normalized) ? normalized : 0;
+};
+
+const toTimestamp = (value: string | null | undefined): number => {
+  if (!value) return Date.now();
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+};
+
+const toDisplayDate = (timestampMs: number): { date: string; time: string } => {
+  const ts = new Date(timestampMs);
+  return {
+    date: ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    time: ts.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+  };
 };
 
 export function useReefTransactions(address: string | undefined) {
@@ -68,65 +101,84 @@ export function useReefTransactions(address: string | undefined) {
       setIsLoading(true);
       try {
         const blockExplorerUrl = getNetwork().blockExplorerUrl;
-        const res = await fetch(
-          `${blockExplorerUrl}/api/v2/addresses/${address}/transactions`,
-          { headers: { accept: 'application/json' } },
-        );
-        const data = await res.json() as ExplorerTransactionsResponse;
+        const [txRes, tokenTransferRes] = await Promise.all([
+          fetch(`${blockExplorerUrl}/api/v2/addresses/${address}/transactions`, {
+            headers: { accept: 'application/json' },
+          }),
+          fetch(`${blockExplorerUrl}/api/v2/addresses/${address}/token-transfers`, {
+            headers: { accept: 'application/json' },
+          }),
+        ]);
+
+        const txData = txRes.ok
+          ? (await txRes.json() as ExplorerTransactionsResponse)
+          : ({ items: [] } as ExplorerTransactionsResponse);
+        const tokenTransfersData = tokenTransferRes.ok
+          ? (await tokenTransferRes.json() as ExplorerAddressTokenTransfersResponse)
+          : ({ items: [] } as ExplorerAddressTokenTransfersResponse);
+
         if (cancelled) return;
 
         const lowerAddress = address.toLowerCase();
-        const mapped: ReefTransaction[] = (data.items || []).map((tx) => {
-          const nativeIsSent = tx.from?.hash?.toLowerCase() === lowerAddress;
-          const nativeValue = toBigIntSafe(tx.value);
+        const nativeTransactions: MappedTransaction[] = (txData.items || [])
+          .map((tx) => {
+            const valueRaw = toBigIntSafe(tx.value);
+            if (valueRaw <= 0n) return null;
 
-          let type: ReefTransaction['type'] = nativeIsSent ? 'sent' : 'received';
-          let symbol = 'REEF';
-          let amount = toFiniteNumber(nativeValue, REEF_DECIMALS);
+            const isSent = tx.from?.hash?.toLowerCase() === lowerAddress;
+            const timestampMs = toTimestamp(tx.timestamp);
+            const { date, time } = toDisplayDate(timestampMs);
 
-          const transfer = tx.token_transfers?.find((item) => {
-            const transferFrom = item.from?.hash?.toLowerCase();
-            const transferTo = item.to?.hash?.toLowerCase();
-            return transferFrom === lowerAddress || transferTo === lowerAddress;
-          });
+            return {
+              id: `native:${tx.hash}`,
+              type: isSent ? 'sent' : 'received',
+              amount: toFiniteNumber(valueRaw, REEF_DECIMALS),
+              symbol: 'REEF',
+              date,
+              time,
+              icon: 'reef',
+              timestampMs,
+            } satisfies MappedTransaction;
+          })
+          .filter((tx): tx is MappedTransaction => tx !== null);
 
-          if (transfer) {
-            const transferFrom = transfer.from?.hash?.toLowerCase();
-            const transferTo = transfer.to?.hash?.toLowerCase();
-            const transferIsSent = transferFrom === lowerAddress && transferTo !== lowerAddress;
-            type = transferIsSent ? 'sent' : 'received';
+        const erc20Transfers: MappedTransaction[] = (tokenTransfersData.items || [])
+          .map((transfer, index) => {
+            if (transfer.token_type && transfer.token_type !== 'ERC-20') return null;
 
-            const tokenDecimals = Number.parseInt(
-              String(transfer.total?.decimals ?? transfer.token?.decimals ?? REEF_DECIMALS),
-              10,
-            );
-            const decimals = Number.isInteger(tokenDecimals) && tokenDecimals >= 0 ? tokenDecimals : REEF_DECIMALS;
+            const fromLower = transfer.from?.hash?.toLowerCase();
+            const toLower = transfer.to?.hash?.toLowerCase();
+            if (fromLower !== lowerAddress && toLower !== lowerAddress) return null;
 
-            const transferRaw = toBigIntSafe(transfer.total?.value ?? transfer.value);
-            const transferAmount = toFiniteNumber(transferRaw, decimals);
-            if (transferAmount > 0) {
-              amount = transferAmount;
-              symbol = String(transfer.token?.symbol || 'TOKEN').toUpperCase();
-            }
-          }
+            const decimalsParsed = Number.parseInt(String(transfer.total?.decimals ?? REEF_DECIMALS), 10);
+            const decimals = Number.isInteger(decimalsParsed) && decimalsParsed >= 0 ? decimalsParsed : REEF_DECIMALS;
+            const amountRaw = toBigIntSafe(transfer.total?.value);
+            const amount = toFiniteNumber(amountRaw, decimals);
+            if (amount <= 0) return null;
 
-          if (amount <= 0) return null;
+            const symbol = String(transfer.token?.symbol || 'TOKEN').toUpperCase();
+            const timestampMs = toTimestamp(transfer.timestamp);
+            const { date, time } = toDisplayDate(timestampMs);
 
-          const timestamp = tx.timestamp ? new Date(tx.timestamp) : new Date();
-          const safeDate = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+            return {
+              id: `erc20:${transfer.transaction_hash || 'unknown'}:${String(transfer.log_index ?? index)}`,
+              type: fromLower === lowerAddress ? 'sent' : 'received',
+              amount,
+              symbol,
+              date,
+              time,
+              icon: symbol === 'REEF' ? 'reef' : symbol.charAt(0),
+              timestampMs,
+            } satisfies MappedTransaction;
+          })
+          .filter((tx): tx is MappedTransaction => tx !== null);
 
-          return {
-            id: tx.hash,
-            type,
-            amount,
-            symbol,
-            date: safeDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-            time: safeDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
-            icon: symbol === 'REEF' ? 'reef' : symbol.charAt(0),
-          } satisfies ReefTransaction;
-        }).filter((tx): tx is ReefTransaction => tx !== null);
+        const merged = [...erc20Transfers, ...nativeTransactions]
+          .sort((a, b) => b.timestampMs - a.timestampMs)
+          .slice(0, 80)
+          .map(({ timestampMs: _timestampMs, ...tx }) => tx);
 
-        setTransactions(mapped);
+        setTransactions(merged);
       } catch (err) {
         console.error('Failed to fetch reef transactions:', err);
       } finally {
