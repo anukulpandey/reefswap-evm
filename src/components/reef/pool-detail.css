@@ -448,6 +448,10 @@
 .pool-token-avatar {
   overflow: hidden;
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
 }
 
 .pool-token-avatar--reef {
@@ -455,9 +459,13 @@
 }
 
 .pool-token-avatar__reef-mark {
-  width: 1.45rem;
-  height: 1.45rem;
+  width: 68%;
+  height: 68%;
+  min-width: 1.45rem;
+  min-height: 1.45rem;
   color: #fff;
+  display: block;
+  flex: 0 0 auto;
 }
 
 .pool-token-avatar__img {
