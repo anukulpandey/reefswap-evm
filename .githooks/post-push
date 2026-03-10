@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+REMOTE_NAME="${1:-origin}"
+
+"${ROOT_DIR}/scripts/telegram-notify.sh" "🚀 Push done on ${BRANCH} -> ${REMOTE_NAME}"

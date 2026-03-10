@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+COMMIT_SHA="$(git rev-parse --short HEAD)"
+SUBJECT="$(git log -1 --pretty=%s)"
+
+"${ROOT_DIR}/scripts/telegram-notify.sh" "✅ Commit done on ${BRANCH}: ${COMMIT_SHA} - ${SUBJECT}"
