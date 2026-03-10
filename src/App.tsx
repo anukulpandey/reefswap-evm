@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import {
   useAccount,
@@ -8,13 +8,14 @@ import {
   useSwitchChain,
   useWalletClient,
 } from 'wagmi';
-import { ArrowUpDown, Check, ChevronDown, Coins, Search, Upload } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import { erc20Abi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from './lib/utils';
+import { resolveTokenIconUrl } from './lib/tokenIcons';
 import AppHeader from './components/reef/AppHeader';
 import PortfolioSummary from './components/reef/PortfolioSummary';
 import AssetTabs from './components/reef/AssetTabs';
@@ -161,6 +162,41 @@ const formatTokenCount = (value: string | number | null | undefined): string => 
   }).format(asNumber(value))
 );
 
+const formatRateValue = (value: string | number | null | undefined): string => (
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
+  }).format(asNumber(value))
+);
+
+const formatTokenPickerBalance = (raw: bigint | undefined, decimals: number): string => {
+  if (raw === undefined || raw <= 0n) return '0';
+  const amount = asNumber(formatUnits(raw, decimals));
+  if (amount <= 0) return '0';
+  if (amount >= 1_000) {
+    const compact = new Intl.NumberFormat('en-US', {
+      notation: 'compact',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount);
+    return compact;
+  }
+  return new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount);
+};
+
+const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
+  if (img.dataset.fallbackApplied === 'true') return;
+  img.dataset.fallbackApplied = 'true';
+  img.src = resolveTokenIconUrl({ address, symbol, iconUrl: null });
+};
+
+const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?: string | null, symbol?: string | null) => {
+  applyFallbackTokenIcon(event.currentTarget, address, symbol);
+};
+
 const dedupeTokenKey = (token: TokenOption): string => (
   token.isNative ? 'native' : (token.address || token.symbol).toLowerCase()
 );
@@ -175,7 +211,11 @@ const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): 
 };
 
 const initialInputToken = defaultTokens[0];
-const initialOutputToken = defaultTokens.find((token) => token.address === contracts.wrappedReef) || defaultTokens[0];
+const initialOutputToken = defaultTokens.find((token) => (
+  !token.isNative &&
+  token.address &&
+  token.address.toLowerCase() !== contracts.wrappedReef.toLowerCase()
+)) || defaultTokens[0];
 
 declare global {
   interface Window {
@@ -276,6 +316,8 @@ const App = () => {
   });
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
   const [openTokenMenu, setOpenTokenMenu] = useState<'in' | 'out' | null>(null);
+  const [tokenMenuSearch, setTokenMenuSearch] = useState('');
+  const [menuTokenBalances, setMenuTokenBalances] = useState<Record<string, bigint>>({});
   const swapCardRef = useRef<HTMLDivElement | null>(null);
 
   const {
@@ -310,6 +352,20 @@ const App = () => {
     address: wrappedReefAddress,
     isNative: false,
   }), [wrappedReefAddress]);
+  const isWrappedReefToken = useCallback((token: TokenOption): boolean => (
+    !token.isNative && !!token.address && sameAddress(token.address, wrappedReefAddress)
+  ), [wrappedReefAddress]);
+  const getTokenDisplaySymbol = useCallback((token: TokenOption): string => (
+    token.isNative || isWrappedReefToken(token) ? 'REEF' : token.symbol
+  ), [isWrappedReefToken]);
+  const closeTokenMenu = useCallback(() => {
+    setOpenTokenMenu(null);
+    setTokenMenuSearch('');
+  }, []);
+  const toggleTokenMenu = useCallback((menu: 'in' | 'out') => {
+    setTokenMenuSearch('');
+    setOpenTokenMenu((current) => (current === menu ? null : menu));
+  }, []);
 
   useEffect(() => {
     if (!subgraphTokens.length) return;
@@ -445,14 +501,34 @@ const App = () => {
     return hasDirectPool(inputAddress, outputAddress);
   }, [hasDirectPool, wrappedReefAddress]);
 
+  const selectableTokens = useMemo(() => (
+    tokens.filter((token) => !isWrappedReefToken(token))
+  ), [isWrappedReefToken, tokens]);
+
   const inputTokenOptions = useMemo(() => {
-    const filtered = tokens.filter((token) => hasAnyPoolForToken(token));
-    return filtered.length ? filtered : tokens;
-  }, [hasAnyPoolForToken, tokens]);
+    const filtered = selectableTokens.filter((token) => hasAnyPoolForToken(token));
+    return filtered.length ? filtered : selectableTokens;
+  }, [hasAnyPoolForToken, selectableTokens]);
 
   const outputTokenOptions = useMemo(() => {
-    return tokens.filter((token) => canSwapBetweenTokens(tokenIn, token));
-  }, [canSwapBetweenTokens, tokenIn, tokens]);
+    return selectableTokens.filter((token) => canSwapBetweenTokens(tokenIn, token));
+  }, [canSwapBetweenTokens, tokenIn, selectableTokens]);
+
+  const activeTokenMenuOptions = useMemo(() => {
+    if (openTokenMenu === 'in') return inputTokenOptions;
+    if (openTokenMenu === 'out') return outputTokenOptions;
+    return [] as TokenOption[];
+  }, [inputTokenOptions, openTokenMenu, outputTokenOptions]);
+
+  const filteredTokenMenuOptions = useMemo(() => {
+    const query = tokenMenuSearch.trim().toLowerCase();
+    if (!query) return activeTokenMenuOptions;
+    return activeTokenMenuOptions.filter((token) => (
+      getTokenDisplaySymbol(token).toLowerCase().includes(query) ||
+      token.name.toLowerCase().includes(query) ||
+      String(token.address || '').toLowerCase().includes(query)
+    ));
+  }, [activeTokenMenuOptions, getTokenDisplaySymbol, tokenMenuSearch]);
 
   useEffect(() => {
     if (!inputTokenOptions.length) return;
@@ -469,14 +545,59 @@ const App = () => {
   }, [outputTokenOptions, tokenOut]);
 
   useEffect(() => {
+    if (!openTokenMenu || !publicClient || !address) {
+      setMenuTokenBalances({});
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchMenuBalances = async () => {
+      const nativeBalance = await publicClient.getBalance({ address });
+      const entries = await Promise.all(
+        activeTokenMenuOptions.map(async (token) => {
+          const key = dedupeTokenKey(token);
+          if (token.isNative || isWrappedReefToken(token)) return [key, nativeBalance] as const;
+          if (!token.address) return [key, 0n] as const;
+
+          try {
+            const raw = await publicClient.readContract({
+              address: token.address,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [address],
+            });
+            return [key, raw] as const;
+          } catch {
+            return [key, 0n] as const;
+          }
+        }),
+      );
+      if (!cancelled) {
+        setMenuTokenBalances(Object.fromEntries(entries));
+      }
+    };
+
+    fetchMenuBalances().catch(() => {
+      if (!cancelled) {
+        setMenuTokenBalances({});
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTokenMenuOptions, address, isWrappedReefToken, openTokenMenu, publicClient]);
+
+  useEffect(() => {
     if (!openTokenMenu) return;
 
     const onPointerDown = (event: MouseEvent) => {
       if (swapCardRef.current && swapCardRef.current.contains(event.target as Node)) return;
-      setOpenTokenMenu(null);
+      closeTokenMenu();
     };
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpenTokenMenu(null);
+      if (event.key === 'Escape') closeTokenMenu();
     };
 
     document.addEventListener('mousedown', onPointerDown);
@@ -485,7 +606,7 @@ const App = () => {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onEscape);
     };
-  }, [openTokenMenu]);
+  }, [closeTokenMenu, openTokenMenu]);
 
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const isWrapPair = useMemo(
@@ -530,9 +651,17 @@ const App = () => {
     return getAddress(directPairFromSubgraph.id);
   }, [directPairFromSubgraph]);
 
+  const usesDirectPairSwap = useMemo(() => (
+    Boolean(
+      directPairAddress &&
+      swapPath.length === 2 &&
+      (tokenIn.isNative || tokenOut.isNative || quoteSource === 'pair-fallback'),
+    )
+  ), [directPairAddress, quoteSource, swapPath, tokenIn.isNative, tokenOut.isNative]);
+
   const swapSpender = useMemo(() => (
-    quoteSource === 'pair-fallback' && directPairAddress ? directPairAddress : contracts.router
-  ), [directPairAddress, quoteSource]);
+    usesDirectPairSwap && directPairAddress ? directPairAddress : contracts.router
+  ), [directPairAddress, usesDirectPairSwap]);
 
   const parsedAmountIn = useMemo(() => {
     if (!amountInText) return 0n;
@@ -542,6 +671,22 @@ const App = () => {
       return 0n;
     }
   }, [amountInText, tokenIn.decimals]);
+
+  const getPairReserveQuote = useCallback((amountInRaw: bigint): bigint => {
+    if (amountInRaw <= 0n || !directPairFromSubgraph || swapPath.length !== 2) return 0n;
+
+    const inputLower = swapPath[0].toLowerCase();
+    const pairToken0 = directPairFromSubgraph.token0.id.toLowerCase();
+    const token0Decimals = Number.parseInt(directPairFromSubgraph.token0.decimals, 10);
+    const token1Decimals = Number.parseInt(directPairFromSubgraph.token1.decimals, 10);
+    if (!Number.isInteger(token0Decimals) || !Number.isInteger(token1Decimals)) return 0n;
+
+    const reserve0Raw = parseUnits(directPairFromSubgraph.reserve0, token0Decimals);
+    const reserve1Raw = parseUnits(directPairFromSubgraph.reserve1, token1Decimals);
+    const reserveIn = inputLower === pairToken0 ? reserve0Raw : reserve1Raw;
+    const reserveOut = inputLower === pairToken0 ? reserve1Raw : reserve0Raw;
+    return getAmountOut(amountInRaw, reserveIn, reserveOut);
+  }, [directPairFromSubgraph, swapPath]);
 
   const parsedSlippageBps = useMemo(() => {
     const value = Number(slippageText);
@@ -556,23 +701,13 @@ const App = () => {
     return quotedOutRaw - discount;
   }, [isWrapPair, parsedSlippageBps, quotedOutRaw]);
 
-  const requiresApproval = !isWrapPair && !tokenIn.isNative && parsedAmountIn > 0n && allowance < parsedAmountIn;
+  const requiresApproval = !usesDirectPairSwap && !isWrapPair && !tokenIn.isNative && parsedAmountIn > 0n && allowance < parsedAmountIn;
   const hasInsufficientBalance = parsedAmountIn > balanceIn;
 
+  const tokenInDisplaySymbol = getTokenDisplaySymbol(tokenIn);
+  const tokenOutDisplaySymbol = getTokenDisplaySymbol(tokenOut);
   const formattedBalanceIn = formatDisplayAmount(balanceIn, tokenIn.decimals);
   const formattedBalanceOut = formatDisplayAmount(balanceOut, tokenOut.decimals);
-  const routeLabel = useMemo(() => {
-    if (isWrapPair) return `${tokenIn.symbol} -> ${tokenOut.symbol} (1:1 wrap)`;
-
-    return swapPath
-          .map(
-            (addressPart) =>
-              tokens.find((token) => token.address === addressPart)?.symbol ||
-          (sameAddress(addressPart, wrappedReefAddress) ? 'WREEF' : shortAddress(addressPart)),
-      )
-      .join(' -> ');
-  }, [isWrapPair, swapPath, tokenIn.symbol, tokenOut.symbol, tokens, wrappedReefAddress]);
-
   const refreshChainState = useCallback(async () => {
     if (!publicClient || !address) {
       setBalanceIn(0n);
@@ -748,6 +883,29 @@ const App = () => {
       return;
     }
 
+    const shouldPreferPairReserveQuote = Boolean(
+      directPairFromSubgraph &&
+      swapPath.length === 2 &&
+      (tokenIn.isNative || tokenOut.isNative),
+    );
+    if (shouldPreferPairReserveQuote) {
+      const output = getPairReserveQuote(parsedAmountIn);
+      if (output > 0n) {
+        setQuotedOutRaw(output);
+        setAmountOutText(formatDisplayAmount(output, tokenOut.decimals, 8));
+        setQuoteError('');
+        setQuoteSource('pair-fallback');
+        setQuoteNote('Using pool reserve quote.');
+      } else {
+        setQuotedOutRaw(0n);
+        setAmountOutText('');
+        setQuoteSource('none');
+        setQuoteError('No pool liquidity found for this pair.');
+      }
+      setIsQuoting(false);
+      return;
+    }
+
     setIsQuoting(true);
     setQuoteError('');
     setQuoteNote('');
@@ -768,7 +926,7 @@ const App = () => {
           setQuoteNote('');
         })
         .catch(() => {
-          const canUsePairFallback = !tokenIn.isNative && !tokenOut.isNative && swapPath.length === 2 && directPairFromSubgraph;
+          const canUsePairFallback = swapPath.length === 2 && directPairFromSubgraph;
 
           if (!canUsePairFallback) {
             setQuotedOutRaw(0n);
@@ -778,36 +936,14 @@ const App = () => {
             return;
           }
 
-          try {
-            const pair = directPairFromSubgraph;
-            if (!pair) throw new Error('pair fallback missing');
-            const inputLower = swapPath[0].toLowerCase();
-            const pairToken0 = pair.token0.id.toLowerCase();
-            const pairToken1 = pair.token1.id.toLowerCase();
-
-            const token0Decimals = Number.parseInt(pair.token0.decimals, 10);
-            const token1Decimals = Number.parseInt(pair.token1.decimals, 10);
-            if (!Number.isInteger(token0Decimals) || !Number.isInteger(token1Decimals)) {
-              throw new Error('invalid token decimals');
-            }
-
-            const reserve0Raw = parseUnits(pair.reserve0, token0Decimals);
-            const reserve1Raw = parseUnits(pair.reserve1, token1Decimals);
-
-            const reserveIn = inputLower === pairToken0 ? reserve0Raw : reserve1Raw;
-            const reserveOut = inputLower === pairToken0 ? reserve1Raw : reserve0Raw;
-
-            const output = getAmountOut(parsedAmountIn, reserveIn, reserveOut);
-            if (output <= 0n) {
-              throw new Error('insufficient reserve output');
-            }
-
+          const output = getPairReserveQuote(parsedAmountIn);
+          if (output > 0n) {
             setQuotedOutRaw(output);
             setAmountOutText(formatDisplayAmount(output, tokenOut.decimals, 8));
             setQuoteError('');
             setQuoteSource('pair-fallback');
             setQuoteNote('Router quote unavailable; using pair reserve fallback.');
-          } catch {
+          } else {
             setQuotedOutRaw(0n);
             setAmountOutText('');
             setQuoteSource('none');
@@ -818,7 +954,17 @@ const App = () => {
     }, 450);
 
     return () => clearTimeout(timer);
-  }, [directPairFromSubgraph, isWrapPair, parsedAmountIn, publicClient, swapPath, tokenIn.isNative, tokenOut.decimals, tokenOut.isNative]);
+  }, [
+    directPairFromSubgraph,
+    getPairReserveQuote,
+    isWrapPair,
+    parsedAmountIn,
+    publicClient,
+    swapPath,
+    tokenIn.isNative,
+    tokenOut.decimals,
+    tokenOut.isNative,
+  ]);
 
   useEffect(() => {
     const syncFromLocation = () => {
@@ -945,7 +1091,7 @@ const App = () => {
     if (isWrapPair) {
       const wrappedCode = await publicClient.getCode({ address: wrappedReefAddress });
       if (!wrappedCode || wrappedCode === '0x') {
-        showErrorToast(`Wrapped token contract not found at ${wrappedReefAddress}. Update VITE_WREEF_ADDRESS or router deployment config.`);
+        showErrorToast(`Wrapped REEF contract not found at ${wrappedReefAddress}. Update VITE_WREEF_ADDRESS or router deployment config.`);
         return;
       }
     }
@@ -979,33 +1125,51 @@ const App = () => {
           functionName: 'withdraw',
           args: [parsedAmountIn],
         });
-      } else if (
-        quoteSource === 'pair-fallback' &&
-        directPairAddress &&
-        directPairFromSubgraph &&
-        !tokenIn.isNative &&
-        !tokenOut.isNative &&
-        swapPath.length === 2
-      ) {
-        const transferToPairHash = await walletClient.writeContract({
-          account: address,
-          chain: reefChain,
-          address: tokenIn.address as Address,
-          abi: erc20Abi,
-          functionName: 'transfer',
-          args: [directPairAddress, parsedAmountIn],
-        });
-
-        showInfoToast(`Input transfer submitted.\nTx: ${shortAddress(transferToPairHash)}\nWaiting for confirmation...`);
-        await publicClient.waitForTransactionReceipt({ hash: transferToPairHash });
-
+      } else if (usesDirectPairSwap && directPairAddress && directPairFromSubgraph && swapPath.length === 2) {
         const pairToken0 = directPairFromSubgraph.token0.id.toLowerCase();
         const tokenInIsToken0 = pairToken0 === swapPath[0].toLowerCase();
         const desiredOut = quotedOutRaw;
         const amount0Out = tokenInIsToken0 ? 0n : desiredOut;
         const amount1Out = tokenInIsToken0 ? desiredOut : 0n;
 
-        hash = await walletClient.writeContract({
+        if (tokenIn.isNative) {
+          const wrapHash = await walletClient.writeContract({
+            account: address,
+            chain: reefChain,
+            address: wrappedReefAddress,
+            abi: wrappedReefAbi,
+            functionName: 'deposit',
+            args: [],
+            value: parsedAmountIn,
+          });
+          showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+
+          const transferWrappedHash = await walletClient.writeContract({
+            account: address,
+            chain: reefChain,
+            address: wrappedReefAddress,
+            abi: erc20Abi,
+            functionName: 'transfer',
+            args: [directPairAddress, parsedAmountIn],
+          });
+          showInfoToast(`Pool transfer submitted.\nTx: ${shortAddress(transferWrappedHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: transferWrappedHash });
+        } else if (tokenIn.address) {
+          const transferToPairHash = await walletClient.writeContract({
+            account: address,
+            chain: reefChain,
+            address: tokenIn.address,
+            abi: erc20Abi,
+            functionName: 'transfer',
+            args: [directPairAddress, parsedAmountIn],
+          });
+
+          showInfoToast(`Pool transfer submitted.\nTx: ${shortAddress(transferToPairHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: transferToPairHash });
+        }
+
+        const poolSwapHash = await walletClient.writeContract({
           account: address,
           chain: reefChain,
           address: directPairAddress,
@@ -1013,6 +1177,21 @@ const App = () => {
           functionName: 'swap',
           args: [amount0Out, amount1Out, address, '0x'],
         });
+
+        if (tokenOut.isNative) {
+          showInfoToast(`Pool swap submitted.\nTx: ${shortAddress(poolSwapHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: poolSwapHash });
+          hash = await walletClient.writeContract({
+            account: address,
+            chain: reefChain,
+            address: wrappedReefAddress,
+            abi: wrappedReefAbi,
+            functionName: 'withdraw',
+            args: [desiredOut],
+          });
+        } else {
+          hash = poolSwapHash;
+        }
       } else if (tokenIn.isNative) {
         hash = await walletClient.writeContract({
           account: address,
@@ -1061,7 +1240,7 @@ const App = () => {
   const onSwitchTokens = () => {
     setTokenIn(tokenOut);
     setTokenOut(tokenIn);
-    setOpenTokenMenu(null);
+    closeTokenMenu();
     setAmountInText('');
     setAmountOutText('');
     setQuoteError('');
@@ -1148,9 +1327,39 @@ const App = () => {
     if (!Number.isFinite(numeric)) return Number(DEFAULT_SLIPPAGE);
     return Math.min(20, Math.max(0, numeric));
   }, [slippageText]);
-  const detailsRate = isWrapPair
-    ? `1 ${tokenIn.symbol} = 1 ${tokenOut.symbol}`
-    : routeLabel || '-';
+  const reserveBasedRate = useMemo(() => {
+    if (isWrapPair) return 1;
+    if (!directPairFromSubgraph || swapPath.length !== 2) return 0;
+
+    const pairToken0 = directPairFromSubgraph.token0.id.toLowerCase();
+    const inputAddress = swapPath[0].toLowerCase();
+    const reserve0 = asNumber(directPairFromSubgraph.reserve0);
+    const reserve1 = asNumber(directPairFromSubgraph.reserve1);
+    if (reserve0 <= 0 || reserve1 <= 0) return 0;
+
+    const reserveIn = inputAddress === pairToken0 ? reserve0 : reserve1;
+    const reserveOut = inputAddress === pairToken0 ? reserve1 : reserve0;
+    if (reserveIn <= 0 || reserveOut <= 0) return 0;
+
+    return reserveOut / reserveIn;
+  }, [directPairFromSubgraph, isWrapPair, swapPath]);
+  const quotedRate = useMemo(() => {
+    if (parsedAmountIn <= 0n || quotedOutRaw <= 0n) return 0;
+    const inValue = asNumber(formatUnits(parsedAmountIn, tokenIn.decimals));
+    const outValue = asNumber(formatUnits(quotedOutRaw, tokenOut.decimals));
+    if (inValue <= 0 || outValue <= 0) return 0;
+    return outValue / inValue;
+  }, [parsedAmountIn, quotedOutRaw, tokenIn.decimals, tokenOut.decimals]);
+  const detailsRate = useMemo(() => {
+    if (isWrapPair) {
+      return `1 ${tokenInDisplaySymbol} = 1 ${tokenOutDisplaySymbol}`;
+    }
+    const resolvedRate = reserveBasedRate > 0 ? reserveBasedRate : quotedRate;
+    if (resolvedRate <= 0) {
+      return `1 ${tokenInDisplaySymbol} = - ${tokenOutDisplaySymbol}`;
+    }
+    return `1 ${tokenInDisplaySymbol} = ${formatRateValue(resolvedRate)} ${tokenOutDisplaySymbol}`;
+  }, [isWrapPair, quotedRate, reserveBasedRate, tokenInDisplaySymbol, tokenOutDisplaySymbol]);
   const amountSliderValue = useMemo(() => {
     if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
     const basisPoints = Number((parsedAmountIn * 10_000n) / balanceIn);
@@ -1168,7 +1377,7 @@ const App = () => {
         : 'Unwrapping...'
       : 'Swapping...'
     : hasInsufficientBalance
-      ? `Insufficient ${tokenIn.symbol}`
+      ? `Insufficient ${tokenInDisplaySymbol}`
       : isWrapPair
         ? routerWrappedTokenSource === 'loading'
           ? 'Loading Wrapped Token...'
@@ -1178,6 +1387,115 @@ const App = () => {
               ? 'Wrap Now'
               : 'Unwrap Now'
         : 'Swap Now';
+
+  const renderTokenMenu = (mode: 'in' | 'out') => {
+    const selectedToken = mode === 'in' ? tokenIn : tokenOut;
+    const defaultEmptyText = mode === 'out' ? 'No swappable tokens' : 'No tokens available';
+    const emptyText = tokenMenuSearch.trim() ? 'No tokens found' : defaultEmptyText;
+
+    return (
+      <div
+        style={{
+          maxWidth: 460,
+          margin: '8px auto',
+          borderRadius: 16,
+          border: '1px solid #d9d0e8',
+          background: '#f8f6fd',
+          boxShadow: '0 10px 24px rgba(87, 63, 141, 0.14)',
+          padding: '8px 8px 4px',
+        }}
+      >
+        <div
+          style={{
+            borderRadius: 12,
+            border: '1px solid #c8c0d8',
+            background: '#f2eff8',
+            padding: '6px 10px',
+            marginBottom: 4,
+          }}
+        >
+          <input
+            value={tokenMenuSearch}
+            onChange={(event) => setTokenMenuSearch(event.target.value)}
+            placeholder="Search token"
+            style={{
+              width: '100%',
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#5f6480',
+            }}
+          />
+        </div>
+        <div style={{ maxHeight: 200, overflowY: 'auto', padding: '0 1px 4px' }}>
+          {filteredTokenMenuOptions.length ? filteredTokenMenuOptions.map((token) => {
+            const tokenKey = dedupeTokenKey(token);
+            const isActive = tokenKey === dedupeTokenKey(selectedToken);
+            const tokenSymbol = getTokenDisplaySymbol(token);
+            const rawBalance = menuTokenBalances[tokenKey];
+            const balanceText = formatTokenPickerBalance(rawBalance, token.decimals);
+
+            return (
+              <button
+                key={tokenKey}
+                type="button"
+                onClick={() => {
+                  if (mode === 'in') {
+                    setTokenIn(token);
+                  } else {
+                    setTokenOut(token);
+                  }
+                  closeTokenMenu();
+                }}
+                style={{
+                  width: '100%',
+                  border: 'none',
+                  background: isActive ? 'rgba(120, 66, 178, 0.12)' : 'transparent',
+                  borderRadius: 10,
+                  padding: '6px 6px',
+                  marginBottom: 2,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}>
+                    {token.isNative || isWrappedReefToken(token) ? (
+                      <Uik.ReefIcon className="h-[30px] w-[30px] text-[#7a3bbd]" />
+                    ) : (
+                      <img
+                        src={resolveTokenIconUrl({ address: token.address, symbol: token.symbol, iconUrl: token.iconUrl || null })}
+                        alt={`${tokenSymbol} icon`}
+                        style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }}
+                        onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
+                      />
+                    )}
+                  </div>
+                  <div style={{ minWidth: 0, textAlign: 'left' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#5f6480', lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}>
+                      {token.name || tokenSymbol}
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#7f8296', marginTop: 1 }}>{tokenSymbol}</div>
+                  </div>
+                </div>
+                <div style={{ fontSize: 16, color: '#8f2fb4', fontWeight: 700, lineHeight: 1.1, minWidth: 78, textAlign: 'right' }}>
+                  {balanceText}
+                </div>
+              </button>
+            );
+          }) : (
+            <div style={{ padding: '14px 10px', color: '#8b819f', fontSize: 15, fontWeight: 600 }}>
+              {emptyText}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const activityRows = useMemo(() => {
     const rows = [
@@ -1301,20 +1619,23 @@ const App = () => {
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
             <div style={{ width: 48, height: 48, flexShrink: 0 }}>
-              {tokenIn.isNative ? (
+              {tokenIn.isNative || isWrappedReefToken(tokenIn) ? (
                 <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
                 </div>
               ) : (
-                <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
-                  {tokenIn.symbol.charAt(0)}
-                </div>
+                <img
+                  src={resolveTokenIconUrl({ address: tokenIn.address, symbol: tokenIn.symbol, iconUrl: tokenIn.iconUrl || null })}
+                  alt={`${tokenInDisplaySymbol} icon`}
+                  style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }}
+                  onError={(event) => handleTokenIconError(event, tokenIn.address, tokenIn.symbol)}
+                />
               )}
             </div>
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
-                onClick={() => setOpenTokenMenu((current) => (current === 'in' ? null : 'in'))}
+                onClick={() => toggleTokenMenu('in')}
                 style={{
                   border: '1px solid #d9caec',
                   borderRadius: 10,
@@ -1330,59 +1651,10 @@ const App = () => {
                   cursor: 'pointer',
                 }}
               >
-                <span>{tokenIn.symbol}</span>
+                <span>{tokenInDisplaySymbol}</span>
                 <ChevronDown size={15} color="#83789a" />
               </button>
-              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceIn} {tokenIn.symbol}</div>
-              {openTokenMenu === 'in' ? (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 8px)',
-                    left: 0,
-                    zIndex: 80,
-                    minWidth: 190,
-                    maxHeight: 240,
-                    overflowY: 'auto',
-                    borderRadius: 12,
-                    border: '1px solid #d4c7e8',
-                    background: '#f4effb',
-                    boxShadow: '0 16px 30px rgba(86, 63, 138, 0.18)',
-                    padding: 6,
-                  }}
-                >
-                  {inputTokenOptions.map((token) => {
-                    const isActive = dedupeTokenKey(token) === dedupeTokenKey(tokenIn);
-                    return (
-                      <button
-                        key={dedupeTokenKey(token)}
-                        type="button"
-                        onClick={() => {
-                          setTokenIn(token);
-                          setOpenTokenMenu(null);
-                        }}
-                        style={{
-                          width: '100%',
-                          border: 'none',
-                          borderRadius: 8,
-                          background: isActive ? 'rgba(120, 66, 178, 0.14)' : 'transparent',
-                          color: '#4b3e67',
-                          padding: '8px 10px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          fontSize: 18,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <span>{token.symbol}</span>
-                        {isActive ? <Check size={16} color="#7c36b8" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
+              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceIn} {tokenInDisplaySymbol}</div>
             </div>
           </div>
           <input
@@ -1405,6 +1677,7 @@ const App = () => {
             }}
           />
         </div>
+        {openTokenMenu === 'in' ? renderTokenMenu('in') : null}
 
         {/* Switch button + Amount slider row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0' }}>
@@ -1443,14 +1716,23 @@ const App = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
             <div style={{ width: 48, height: 48, flexShrink: 0 }}>
               <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
-                {tokenOut.isNative ? <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} /> : tokenOut.symbol.charAt(0)}
+                {tokenOut.isNative || isWrappedReefToken(tokenOut) ? (
+                  <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
+                ) : (
+                  <img
+                    src={resolveTokenIconUrl({ address: tokenOut.address, symbol: tokenOut.symbol, iconUrl: tokenOut.iconUrl || null })}
+                    alt={`${tokenOutDisplaySymbol} icon`}
+                    style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }}
+                    onError={(event) => handleTokenIconError(event, tokenOut.address, tokenOut.symbol)}
+                  />
+                )}
               </div>
             </div>
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
                 disabled={!outputTokenOptions.length}
-                onClick={() => setOpenTokenMenu((current) => (current === 'out' ? null : 'out'))}
+                onClick={() => toggleTokenMenu('out')}
                 style={{
                   border: '1px solid #d9caec',
                   borderRadius: 10,
@@ -1467,63 +1749,10 @@ const App = () => {
                   opacity: outputTokenOptions.length ? 1 : 0.65,
                 }}
               >
-                <span>{tokenOut.symbol}</span>
+                <span>{tokenOutDisplaySymbol}</span>
                 <ChevronDown size={15} color="#83789a" />
               </button>
-              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceOut} {tokenOut.symbol}</div>
-              {openTokenMenu === 'out' ? (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 8px)',
-                    left: 0,
-                    zIndex: 80,
-                    minWidth: 190,
-                    maxHeight: 240,
-                    overflowY: 'auto',
-                    borderRadius: 12,
-                    border: '1px solid #d4c7e8',
-                    background: '#f4effb',
-                    boxShadow: '0 16px 30px rgba(86, 63, 138, 0.18)',
-                    padding: 6,
-                  }}
-                >
-                  {outputTokenOptions.length ? outputTokenOptions.map((token) => {
-                    const isActive = dedupeTokenKey(token) === dedupeTokenKey(tokenOut);
-                    return (
-                      <button
-                        key={dedupeTokenKey(token)}
-                        type="button"
-                        onClick={() => {
-                          setTokenOut(token);
-                          setOpenTokenMenu(null);
-                        }}
-                        style={{
-                          width: '100%',
-                          border: 'none',
-                          borderRadius: 8,
-                          background: isActive ? 'rgba(120, 66, 178, 0.14)' : 'transparent',
-                          color: '#4b3e67',
-                          padding: '8px 10px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          fontSize: 18,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <span>{token.symbol}</span>
-                        {isActive ? <Check size={16} color="#7c36b8" /> : null}
-                      </button>
-                    );
-                  }) : (
-                    <div style={{ padding: '8px 10px', color: '#8b819f', fontSize: 14, fontWeight: 600 }}>
-                      No swappable tokens
-                    </div>
-                  )}
-                </div>
-              ) : null}
+              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceOut} {tokenOutDisplaySymbol}</div>
             </div>
           </div>
           <input
@@ -1545,6 +1774,7 @@ const App = () => {
             }}
           />
         </div>
+        {openTokenMenu === 'out' ? renderTokenMenu('out') : null}
 
         {/* Rate / Fee / Slippage info card */}
         <div
@@ -1553,7 +1783,10 @@ const App = () => {
             borderRadius: 14, padding: '14px 20px', marginBottom: 14,
           }}
         >
-          <div style={{ fontSize: 14, color: 'var(--text-light)', marginBottom: 8 }}>Rate</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>Rate</span>
+            <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{detailsRate}</span>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
             <span style={{ fontSize: 14, color: 'var(--text-light)' }}>Fee</span>
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{isWrapPair ? '0 $' : '0.30%'}</span>
@@ -1585,7 +1818,7 @@ const App = () => {
         {isWrongChain ? (
           <Uik.Button className="swap-action-btn" text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'} fill size="large" disabled={isSwitching} onClick={switchToReef} />
         ) : requiresApproval ? (
-          <Uik.Button className="swap-action-btn" text={isApproving ? 'Approving...' : `Approve ${tokenIn.symbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
+          <Uik.Button className="swap-action-btn" text={isApproving ? 'Approving...' : `Approve ${tokenInDisplaySymbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
         ) : (
           <Uik.Button className="swap-action-btn" text={swapButtonLabel} fill size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
         )}
