@@ -97,6 +97,12 @@ const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): 
   return (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
 };
 
+const applySlippage = (amount: bigint, slippageBps: bigint): bigint => {
+  if (amount <= 0n) return 0n;
+  const cappedSlippage = slippageBps > 10_000n ? 10_000n : slippageBps;
+  return amount - ((amount * cappedSlippage) / 10_000n);
+};
+
 const asTimestamp = (value: string | number | null | undefined): number => {
   const timestamp = Math.trunc(asNumber(value));
   return timestamp > 0 ? timestamp : 0;
@@ -384,16 +390,27 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   const [amountInText, setAmountInText] = useState('');
   const [amountOutText, setAmountOutText] = useState('');
   const [slippagePercentage, setSlippagePercentage] = useState(0.8);
-  const [stakePercentage, setStakePercentage] = useState(0);
+  const [stakeAmountToken0Text, setStakeAmountToken0Text] = useState('');
   const [unstakePercentage, setUnstakePercentage] = useState(0);
   const [quotedOutRaw, setQuotedOutRaw] = useState<bigint>(0n);
   const [balanceIn, setBalanceIn] = useState<bigint>(0n);
   const [balanceOut, setBalanceOut] = useState<bigint>(0n);
   const [allowance, setAllowance] = useState<bigint>(0n);
+  const [token0WalletBalance, setToken0WalletBalance] = useState<bigint>(0n);
+  const [token1WalletBalance, setToken1WalletBalance] = useState<bigint>(0n);
+  const [token0LiquidityAllowance, setToken0LiquidityAllowance] = useState<bigint>(0n);
+  const [token1LiquidityAllowance, setToken1LiquidityAllowance] = useState<bigint>(0n);
+  const [lpTokenBalance, setLpTokenBalance] = useState<bigint>(0n);
+  const [lpTokenAllowance, setLpTokenAllowance] = useState<bigint>(0n);
+  const [lpTotalSupply, setLpTotalSupply] = useState<bigint>(0n);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
+  const [isApprovingLiquidity, setIsApprovingLiquidity] = useState(false);
+  const [isStaking, setIsStaking] = useState(false);
+  const [isApprovingUnstake, setIsApprovingUnstake] = useState(false);
+  const [isUnstaking, setIsUnstaking] = useState(false);
   const [quoteError, setQuoteError] = useState('');
   const [quoteNote, setQuoteNote] = useState('');
   const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
@@ -402,6 +419,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
     data: pairTransactions,
     isLoading: isChartLoading,
     isError: hasChartError,
+    refetch: refetchPairTransactions,
   } = useSubgraphPairTransactions(pair?.id, CHART_SAMPLE_SIZE);
 
   const token0Address = pair?.token0.id || null;
@@ -420,6 +438,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   const token1SafeDecimals = Number.isInteger(token1Decimals) ? token1Decimals : 18;
   const token0NormalizedAddress = token0Address && isAddress(token0Address) ? getAddress(token0Address) : null;
   const token1NormalizedAddress = token1Address && isAddress(token1Address) ? getAddress(token1Address) : null;
+  const pairNormalizedAddress = pair?.id && isAddress(pair.id) ? getAddress(pair.id) : null;
   const token0Icon = resolveTokenIconUrl({ address: token0Address, symbol: token0SymbolRaw, iconUrl: null });
   const token1Icon = resolveTokenIconUrl({ address: token1Address, symbol: token1SymbolRaw, iconUrl: null });
   const tradeToken0: TradeToken = {
@@ -447,9 +466,46 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   ), [hasTradePair, inputToken.address, outputToken.address]);
   const reserve0 = asNumber(pair?.reserve0);
   const reserve1 = asNumber(pair?.reserve1);
+  const reserve0Raw = useMemo(() => {
+    if (!pair?.reserve0) return 0n;
+    try {
+      return parseUnits(pair.reserve0, token0SafeDecimals);
+    } catch {
+      return 0n;
+    }
+  }, [pair?.reserve0, token0SafeDecimals]);
+  const reserve1Raw = useMemo(() => {
+    if (!pair?.reserve1) return 0n;
+    try {
+      return parseUnits(pair.reserve1, token1SafeDecimals);
+    } catch {
+      return 0n;
+    }
+  }, [pair?.reserve1, token1SafeDecimals]);
   const reserveTotal = reserve0 + reserve1;
   const token0Weight = reserveTotal > 0 ? (reserve0 / reserveTotal) * 100 : 0;
   const token1Weight = reserveTotal > 0 ? (reserve1 / reserveTotal) * 100 : 0;
+  const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
+  const txSummaryText = totalTransactions > 0 ? `${totalTransactions} tx` : 'Show Transactions';
+  const volume24hUsd = useMemo(() => {
+    const swaps = pairTransactions?.swaps || [];
+    if (!swaps.length) return 0;
+    const cutoff = Math.floor(Date.now() / 1000) - 86_400;
+    return swaps.reduce((sum, swap) => {
+      const timestamp = asTimestamp(swap.timestamp);
+      if (timestamp < cutoff) return sum;
+      return sum + Math.max(0, asNumber(swap.amountUSD));
+    }, 0);
+  }, [pairTransactions?.swaps]);
+  const myLiquidityShare = useMemo(() => {
+    if (lpTokenBalance <= 0n || lpTotalSupply <= 0n) return 0;
+    return Number((lpTokenBalance * 1_000_000n) / lpTotalSupply) / 1_000_000;
+  }, [lpTokenBalance, lpTotalSupply]);
+  const myLiquidityUsd = asNumber(pair?.reserveUSD) * myLiquidityShare;
+  const myToken0Liquidity = reserve0 * myLiquidityShare;
+  const myToken1Liquidity = reserve1 * myLiquidityShare;
+  const estimatedPoolFees24hUsd = volume24hUsd * SWAP_FEE_RATE;
+  const myFees24hUsdEstimate = estimatedPoolFees24hUsd * myLiquidityShare;
 
   const poolStatsTokens = [
     {
@@ -458,8 +514,8 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
       usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve0, 1) : 0),
       ratio: `1 ${token0Symbol} = ${formatRate(pair?.token0Price)} ${token1Symbol}`,
       totalLiquidity: formatTokenAmount(reserve0),
-      myLiquidity: '-',
-      fees24h: '-',
+      myLiquidity: `${formatTokenAmount(myToken0Liquidity)} ${token0Symbol}`,
+      fees24h: formatUsd(myFees24hUsdEstimate * (token0Weight / 100)),
     },
     {
       symbol: token1Symbol,
@@ -467,13 +523,10 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
       usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve1, 1) : 0),
       ratio: `1 ${token1Symbol} = ${formatRate(pair?.token1Price)} ${token0Symbol}`,
       totalLiquidity: formatTokenAmount(reserve1),
-      myLiquidity: '-',
-      fees24h: '-',
+      myLiquidity: `${formatTokenAmount(myToken1Liquidity)} ${token1Symbol}`,
+      fees24h: formatUsd(myFees24hUsdEstimate * (token1Weight / 100)),
     },
   ];
-
-  const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
-  const txSummaryText = 'Show Transactions';
   const parsedAmountIn = useMemo(() => {
     if (!amountInText) return 0n;
     try {
@@ -537,52 +590,116 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
             : quoteError
               ? 'No Route Found'
               : `Swap ${inputToken.symbol}`;
-  const stakeBalanceToken0 = useMemo(() => {
-    if (!tradeToken0.address) return 0n;
-    if (inputToken.address && sameAddress(tradeToken0.address, inputToken.address)) return balanceIn;
-    if (outputToken.address && sameAddress(tradeToken0.address, outputToken.address)) return balanceOut;
-    return 0n;
-  }, [balanceIn, balanceOut, inputToken.address, outputToken.address, tradeToken0.address]);
-  const stakeBalanceToken1 = useMemo(() => {
-    if (!tradeToken1.address) return 0n;
-    if (inputToken.address && sameAddress(tradeToken1.address, inputToken.address)) return balanceIn;
-    if (outputToken.address && sameAddress(tradeToken1.address, outputToken.address)) return balanceOut;
-    return 0n;
-  }, [balanceIn, balanceOut, inputToken.address, outputToken.address, tradeToken1.address]);
+  const stakeBalanceToken0 = token0WalletBalance;
+  const stakeBalanceToken1 = token1WalletBalance;
   const stakeAmountToken0Raw = useMemo(() => {
-    if (stakePercentage <= 0 || stakeBalanceToken0 <= 0n) return 0n;
-    const basisPoints = BigInt(Math.round(stakePercentage * 100));
-    return (stakeBalanceToken0 * basisPoints) / 10_000n;
-  }, [stakeBalanceToken0, stakePercentage]);
-  const stakeAmountToken0 = useMemo(
-    () => trimDecimalString(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals)),
-    [stakeAmountToken0Raw, tradeToken0.decimals],
-  );
-  const stakeAmountToken1 = useMemo(() => {
-    const amount0 = asNumber(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals));
-    const price = asNumber(pair?.token0Price);
-    if (amount0 <= 0 || price <= 0) return '0.0';
-    return trimDecimalString((amount0 * price).toFixed(6));
-  }, [pair?.token0Price, stakeAmountToken0Raw, tradeToken0.decimals]);
+    if (!stakeAmountToken0Text) return 0n;
+    try {
+      return parseUnits(stakeAmountToken0Text, tradeToken0.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [stakeAmountToken0Text, tradeToken0.decimals]);
+  const stakeAmountToken1Raw = useMemo(() => {
+    if (stakeAmountToken0Raw <= 0n || reserve0Raw <= 0n || reserve1Raw <= 0n) return 0n;
+    return (stakeAmountToken0Raw * reserve1Raw) / reserve0Raw;
+  }, [reserve0Raw, reserve1Raw, stakeAmountToken0Raw]);
+  const stakePercentage = useMemo(() => {
+    if (stakeBalanceToken0 <= 0n || stakeAmountToken0Raw <= 0n) return 0;
+    const basisPoints = Number((stakeAmountToken0Raw * 10_000n) / stakeBalanceToken0);
+    return Math.max(0, Math.min(100, basisPoints / 100));
+  }, [stakeAmountToken0Raw, stakeBalanceToken0]);
+  const stakeAmountToken1 = trimDecimalString(formatUnits(stakeAmountToken1Raw, tradeToken1.decimals));
+  const hasStakeInsufficientToken0 = stakeAmountToken0Raw > stakeBalanceToken0;
+  const hasStakeInsufficientToken1 = stakeAmountToken1Raw > stakeBalanceToken1;
+  const hasStakeInsufficientBalance = hasStakeInsufficientToken0 || hasStakeInsufficientToken1;
+  const stakeApprovalAddress = useMemo<Address | null>(() => {
+    if (stakeAmountToken0Raw > 0n && token0LiquidityAllowance < stakeAmountToken0Raw) return token0NormalizedAddress;
+    if (stakeAmountToken1Raw > 0n && token1LiquidityAllowance < stakeAmountToken1Raw) return token1NormalizedAddress;
+    return null;
+  }, [
+    stakeAmountToken0Raw,
+    stakeAmountToken1Raw,
+    token0LiquidityAllowance,
+    token0NormalizedAddress,
+    token1LiquidityAllowance,
+    token1NormalizedAddress,
+  ]);
+  const stakeApprovalSymbol = stakeApprovalAddress && token0NormalizedAddress && sameAddress(stakeApprovalAddress, token0NormalizedAddress)
+    ? tradeToken0.symbol
+    : tradeToken1.symbol;
   const stakeTotalUsd = useMemo(() => {
     const usdPerToken0 = reserve0 > 0 ? asNumber(pair?.reserveUSD) / reserve0 : 0;
     const usdPerToken1 = reserve1 > 0 ? asNumber(pair?.reserveUSD) / reserve1 : 0;
-    const amount0 = asNumber(stakeAmountToken0);
-    const amount1 = asNumber(stakeAmountToken1);
+    const amount0 = asNumber(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals));
+    const amount1 = asNumber(formatUnits(stakeAmountToken1Raw, tradeToken1.decimals));
     return Math.max(0, (amount0 * usdPerToken0) + (amount1 * usdPerToken1));
-  }, [pair?.reserveUSD, reserve0, reserve1, stakeAmountToken0, stakeAmountToken1]);
-  const stakeButtonLabel = stakeAmountToken0Raw > 0n ? 'Stake Now' : `Missing ${tradeToken0.symbol} amount`;
+  }, [pair?.reserveUSD, reserve0, reserve1, stakeAmountToken0Raw, stakeAmountToken1Raw, tradeToken0.decimals, tradeToken1.decimals]);
+  const canStake = actionTab === 'stake' &&
+    isConnected &&
+    !isWrongChain &&
+    Boolean(token0NormalizedAddress && token1NormalizedAddress) &&
+    stakeAmountToken0Raw > 0n &&
+    stakeAmountToken1Raw > 0n &&
+    !hasStakeInsufficientBalance &&
+    !stakeApprovalAddress &&
+    !isRefreshing;
+  const stakeButtonLabel = stakeAmountToken0Raw <= 0n
+    ? `Missing ${tradeToken0.symbol} amount`
+    : stakeApprovalAddress
+      ? (isApprovingLiquidity ? `Approving ${stakeApprovalSymbol}...` : `Approve ${stakeApprovalSymbol}`)
+    : hasStakeInsufficientBalance
+      ? `Insufficient ${hasStakeInsufficientToken0 ? tradeToken0.symbol : tradeToken1.symbol}`
+      : (isStaking ? 'Staking...' : 'Stake Now');
   const stakeFormattedBalanceToken0 = formatDisplayAmount(stakeBalanceToken0, tradeToken0.decimals);
   const stakeFormattedBalanceToken1 = formatDisplayAmount(stakeBalanceToken1, tradeToken1.decimals);
   const formattedStakeTotal = `$${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(stakeTotalUsd)}`;
-  const unstakeValueUsd = 0;
+  const unstakeLiquidityRaw = useMemo(() => {
+    if (unstakePercentage <= 0 || lpTokenBalance <= 0n) return 0n;
+    const basisPoints = BigInt(Math.round(unstakePercentage * 100));
+    return (lpTokenBalance * basisPoints) / 10_000n;
+  }, [lpTokenBalance, unstakePercentage]);
+  const unstakeAmountToken0Raw = useMemo(() => {
+    if (unstakeLiquidityRaw <= 0n || lpTotalSupply <= 0n || reserve0Raw <= 0n) return 0n;
+    return (reserve0Raw * unstakeLiquidityRaw) / lpTotalSupply;
+  }, [lpTotalSupply, reserve0Raw, unstakeLiquidityRaw]);
+  const unstakeAmountToken1Raw = useMemo(() => {
+    if (unstakeLiquidityRaw <= 0n || lpTotalSupply <= 0n || reserve1Raw <= 0n) return 0n;
+    return (reserve1Raw * unstakeLiquidityRaw) / lpTotalSupply;
+  }, [lpTotalSupply, reserve1Raw, unstakeLiquidityRaw]);
+  const unstakeAmountToken0 = formatDisplayAmount(unstakeAmountToken0Raw, tradeToken0.decimals, 6);
+  const unstakeAmountToken1 = formatDisplayAmount(unstakeAmountToken1Raw, tradeToken1.decimals, 6);
+  const unstakeValueUsd = useMemo(() => {
+    const usdPerToken0 = reserve0 > 0 ? asNumber(pair?.reserveUSD) / reserve0 : 0;
+    const usdPerToken1 = reserve1 > 0 ? asNumber(pair?.reserveUSD) / reserve1 : 0;
+    const amount0 = asNumber(formatUnits(unstakeAmountToken0Raw, tradeToken0.decimals));
+    const amount1 = asNumber(formatUnits(unstakeAmountToken1Raw, tradeToken1.decimals));
+    return Math.max(0, (amount0 * usdPerToken0) + (amount1 * usdPerToken1));
+  }, [pair?.reserveUSD, reserve0, reserve1, tradeToken0.decimals, tradeToken1.decimals, unstakeAmountToken0Raw, unstakeAmountToken1Raw]);
+  const hasUnstakeInsufficientBalance = unstakeLiquidityRaw > lpTokenBalance;
+  const unstakeRequiresApproval = unstakeLiquidityRaw > 0n && lpTokenAllowance < unstakeLiquidityRaw;
+  const canUnstake = actionTab === 'unstake' &&
+    isConnected &&
+    !isWrongChain &&
+    Boolean(token0NormalizedAddress && token1NormalizedAddress && pairNormalizedAddress) &&
+    unstakeLiquidityRaw > 0n &&
+    !hasUnstakeInsufficientBalance &&
+    !unstakeRequiresApproval &&
+    !isRefreshing;
   const formattedUnstakeValue = `$${new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   }).format(unstakeValueUsd)}`;
+  const unstakeButtonLabel = unstakeLiquidityRaw <= 0n
+    ? 'Insufficient pool balance'
+    : unstakeRequiresApproval
+      ? (isApprovingUnstake ? 'Approving LP Token...' : 'Approve LP Token')
+      : hasUnstakeInsufficientBalance
+        ? 'Insufficient pool balance'
+        : (isUnstaking ? 'Unstaking...' : 'Unstake Now');
 
   const clearTradeQuote = useCallback(() => {
     setAmountOutText('');
@@ -593,42 +710,78 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   }, []);
 
   const refreshTradeState = useCallback(async () => {
-    if (!publicClient || !address || !inputToken.address || !outputToken.address || !hasTradePair) {
+    if (!publicClient || !address) {
       setBalanceIn(0n);
       setBalanceOut(0n);
       setAllowance(0n);
+      setToken0WalletBalance(0n);
+      setToken1WalletBalance(0n);
+      setToken0LiquidityAllowance(0n);
+      setToken1LiquidityAllowance(0n);
+      setLpTokenBalance(0n);
+      setLpTokenAllowance(0n);
+      setLpTotalSupply(0n);
       return;
     }
 
-    setIsRefreshing(true);
-    try {
-      const [nextBalanceIn, nextBalanceOut, nextAllowance] = await Promise.all([
-        publicClient.readContract({
-          address: inputToken.address,
+    const readBalance = (tokenAddress: Address | null): Promise<bigint> => (
+      tokenAddress
+        ? publicClient.readContract({
+          address: tokenAddress,
           abi: erc20Abi,
           functionName: 'balanceOf',
           args: [address],
-        }).catch(() => 0n),
-        publicClient.readContract({
-          address: outputToken.address,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [address],
-        }).catch(() => 0n),
-        publicClient.readContract({
-          address: inputToken.address,
+        }).catch(() => 0n)
+        : Promise.resolve(0n)
+    );
+    const readAllowance = (tokenAddress: Address | null): Promise<bigint> => (
+      tokenAddress
+        ? publicClient.readContract({
+          address: tokenAddress,
           abi: erc20Abi,
           functionName: 'allowance',
           args: [address, contracts.router],
-        }).catch(() => 0n),
+        }).catch(() => 0n)
+        : Promise.resolve(0n)
+    );
+    const readTotalSupply = (tokenAddress: Address | null): Promise<bigint> => (
+      tokenAddress
+        ? publicClient.readContract({
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: 'totalSupply',
+        }).catch(() => 0n)
+        : Promise.resolve(0n)
+    );
+
+    setIsRefreshing(true);
+    try {
+      const [nextBalanceIn, nextBalanceOut, nextAllowance, nextToken0Balance, nextToken1Balance, nextToken0Allowance, nextToken1Allowance, nextLpBalance, nextLpAllowance, nextLpTotalSupply] = await Promise.all([
+        readBalance(inputToken.address),
+        readBalance(outputToken.address),
+        readAllowance(inputToken.address),
+        readBalance(token0NormalizedAddress),
+        readBalance(token1NormalizedAddress),
+        readAllowance(token0NormalizedAddress),
+        readAllowance(token1NormalizedAddress),
+        readBalance(pairNormalizedAddress),
+        readAllowance(pairNormalizedAddress),
+        readTotalSupply(pairNormalizedAddress),
       ]);
       setBalanceIn(nextBalanceIn);
       setBalanceOut(nextBalanceOut);
       setAllowance(nextAllowance);
+      setToken0WalletBalance(nextToken0Balance);
+      setToken1WalletBalance(nextToken1Balance);
+      setToken0LiquidityAllowance(nextToken0Allowance);
+      setToken1LiquidityAllowance(nextToken1Allowance);
+      setLpTokenBalance(nextLpBalance);
+      setLpTokenAllowance(nextLpAllowance);
+      setLpTotalSupply(nextLpTotalSupply);
     } finally {
       setIsRefreshing(false);
     }
-  }, [address, hasTradePair, inputToken.address, outputToken.address, publicClient]);
+  }, [address, inputToken.address, outputToken.address, pairNormalizedAddress, publicClient, token0NormalizedAddress, token1NormalizedAddress]);
 
   useEffect(() => {
     refreshTradeState().catch(() => {
@@ -638,7 +791,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
 
   useEffect(() => {
     setIsTradeReversed(false);
-    setStakePercentage(0);
+    setStakeAmountToken0Text('');
     setUnstakePercentage(0);
     clearTradeQuote();
     setAmountInText('');
@@ -722,6 +875,21 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
     const basisPoints = BigInt(Math.round(safePercent * 100));
     const raw = (balanceIn * basisPoints) / 10_000n;
     setAmountInText(trimDecimalString(formatUnits(raw, inputToken.decimals)));
+  };
+
+  const setStakeAmountByPercent = (percent: number) => {
+    const safePercent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 0;
+    if (stakeBalanceToken0 <= 0n || safePercent <= 0) {
+      setStakeAmountToken0Text(safePercent === 0 ? '0' : '');
+      return;
+    }
+    const basisPoints = BigInt(Math.round(safePercent * 100));
+    const raw = (stakeBalanceToken0 * basisPoints) / 10_000n;
+    setStakeAmountToken0Text(trimDecimalString(formatUnits(raw, tradeToken0.decimals)));
+  };
+
+  const onStakeAmountToken0Change = (value: string) => {
+    setStakeAmountToken0Text(normalizeInput(value));
   };
 
   const setSlippageFromSlider = (position: number) => {
@@ -808,6 +976,156 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
       Uik.notify.danger({ message: getErrorMessage(error) });
     } finally {
       setIsSwapping(false);
+    }
+  };
+
+  const approveLiquidityToken = async () => {
+    if (!walletClient || !publicClient || !address || !stakeApprovalAddress) return;
+
+    setIsApprovingLiquidity(true);
+    Uik.notify.info({ message: `Submitting ${stakeApprovalSymbol} approval...` });
+    try {
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: stakeApprovalAddress,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [contracts.router, MAX_APPROVAL],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Approval submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: `${stakeApprovalSymbol} approval confirmed.` });
+      await refreshTradeState();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsApprovingLiquidity(false);
+    }
+  };
+
+  const stakeLiquidity = async () => {
+    if (
+      !walletClient ||
+      !publicClient ||
+      !address ||
+      !token0NormalizedAddress ||
+      !token1NormalizedAddress ||
+      stakeAmountToken0Raw <= 0n ||
+      stakeAmountToken1Raw <= 0n
+    ) {
+      return;
+    }
+
+    setIsStaking(true);
+    Uik.notify.info({ message: 'Submitting add liquidity...' });
+    try {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
+      const minAmount0 = applySlippage(stakeAmountToken0Raw, parsedSlippageBps);
+      const minAmount1 = applySlippage(stakeAmountToken1Raw, parsedSlippageBps);
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: contracts.router,
+        abi: reefswapRouterAbi,
+        functionName: 'addLiquidity',
+        args: [
+          token0NormalizedAddress,
+          token1NormalizedAddress,
+          stakeAmountToken0Raw,
+          stakeAmountToken1Raw,
+          minAmount0,
+          minAmount1,
+          address,
+          deadline,
+        ],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Liquidity add submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: 'Liquidity added successfully.' });
+      setStakeAmountToken0Text('');
+      await refreshTradeState();
+      await refetchPairTransactions();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsStaking(false);
+    }
+  };
+
+  const approveUnstakeToken = async () => {
+    if (!walletClient || !publicClient || !address || !pairNormalizedAddress) return;
+
+    setIsApprovingUnstake(true);
+    Uik.notify.info({ message: 'Submitting LP token approval...' });
+    try {
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: pairNormalizedAddress,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [contracts.router, MAX_APPROVAL],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Approval submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: 'LP approval confirmed.' });
+      await refreshTradeState();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsApprovingUnstake(false);
+    }
+  };
+
+  const unstakeLiquidity = async () => {
+    if (
+      !walletClient ||
+      !publicClient ||
+      !address ||
+      !token0NormalizedAddress ||
+      !token1NormalizedAddress ||
+      unstakeLiquidityRaw <= 0n
+    ) {
+      return;
+    }
+
+    setIsUnstaking(true);
+    Uik.notify.info({ message: 'Submitting remove liquidity...' });
+    try {
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
+      const minAmount0 = applySlippage(unstakeAmountToken0Raw, parsedSlippageBps);
+      const minAmount1 = applySlippage(unstakeAmountToken1Raw, parsedSlippageBps);
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: contracts.router,
+        abi: reefswapRouterAbi,
+        functionName: 'removeLiquidity',
+        args: [
+          token0NormalizedAddress,
+          token1NormalizedAddress,
+          unstakeLiquidityRaw,
+          minAmount0,
+          minAmount1,
+          address,
+          deadline,
+        ],
+      });
+      setLastTxHash(hash);
+      Uik.notify.info({ message: `Liquidity remove submitted. Tx: ${shortAddress(hash)}` });
+      await publicClient.waitForTransactionReceipt({ hash });
+      Uik.notify.success({ message: 'Liquidity removed successfully.' });
+      setUnstakePercentage(0);
+      await refreshTradeState();
+      await refetchPairTransactions();
+    } catch (error) {
+      Uik.notify.danger({ message: getErrorMessage(error) });
+    } finally {
+      setIsUnstaking(false);
     }
   };
 
@@ -966,14 +1284,14 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
 
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">My Liquidity</div>
-                <div className="pool-stats__main-stat-value">{formatUsd(0)}</div>
+                <div className="pool-stats__main-stat-value">{formatUsd(myLiquidityUsd)}</div>
               </div>
 
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">24h Volume</div>
                 <div className="pool-stats__main-stat-value">
-                  <span>{formatUsd(pair?.volumeUSD)}</span>
-                  <Uik.Trend type="good" direction="up" text={`${totalTransactions > 0 ? '+' : ''}${totalTransactions.toFixed(2)}%`} />
+                  <span>{formatUsd(volume24hUsd)}</span>
+                  {totalTransactions > 0 ? <Uik.Trend type="good" direction="up" text={`+${totalTransactions} tx`} /> : null}
                 </div>
               </div>
             </div>
@@ -1206,7 +1524,12 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
                   </div>
                 </div>
                 <div className="uik-pool-actions-token__value">
-                  <input value={stakeAmountToken0} readOnly />
+                  <input
+                    value={stakeAmountToken0Text}
+                    onChange={(event) => onStakeAmountToken0Change(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="0.0"
+                  />
                 </div>
               </div>
 
@@ -1247,7 +1570,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
                   value={stakePercentage}
                   helpers={AMOUNT_SLIDER_HELPERS}
                   tooltip={`${stakePercentage.toFixed(2)}%`}
-                  onChange={(position: number) => setStakePercentage(position)}
+                  onChange={setStakeAmountByPercent}
                 />
               </div>
 
@@ -1256,8 +1579,27 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
                 text={stakeButtonLabel}
                 icon={faCoins}
                 fill
-                disabled
-                onClick={() => {}}
+                disabled={
+                  (!isConnected && isConnecting) ||
+                  (isConnected && isWrongChain && isSwitching) ||
+                  (isConnected && !isWrongChain && !!stakeApprovalAddress && isApprovingLiquidity) ||
+                  (isConnected && !isWrongChain && !stakeApprovalAddress && (!canStake || isStaking))
+                }
+                onClick={() => {
+                  if (!isConnected) {
+                    connectWallet().catch(() => {});
+                    return;
+                  }
+                  if (isWrongChain) {
+                    switchToReef().catch(() => {});
+                    return;
+                  }
+                  if (stakeApprovalAddress) {
+                    approveLiquidityToken().catch(() => {});
+                    return;
+                  }
+                  stakeLiquidity().catch(() => {});
+                }}
               />
             </div>
           ) : (
@@ -1268,6 +1610,9 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
                   <span className="uik-pool-actions__withdraw-percentage-sign">%</span>
                 </div>
                 <div className="uik-pool-actions__withdraw-value">{formattedUnstakeValue}</div>
+                <div className="uik-pool-actions__withdraw-value">
+                  {unstakeAmountToken0} {tradeToken0.symbol} / {unstakeAmountToken1} {tradeToken1.symbol}
+                </div>
               </div>
 
               <div className="uik-pool-actions__slider pool-actions__unstake-slider">
@@ -1282,11 +1627,30 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
 
               <Uik.Button
                 className="uik-pool-actions__cta"
-                text="Insufficient pool balance"
+                text={unstakeButtonLabel}
                 icon={faArrowUpFromBracket}
                 fill
-                disabled
-                onClick={() => {}}
+                disabled={
+                  (!isConnected && isConnecting) ||
+                  (isConnected && isWrongChain && isSwitching) ||
+                  (isConnected && !isWrongChain && unstakeRequiresApproval && isApprovingUnstake) ||
+                  (isConnected && !isWrongChain && !unstakeRequiresApproval && (!canUnstake || isUnstaking))
+                }
+                onClick={() => {
+                  if (!isConnected) {
+                    connectWallet().catch(() => {});
+                    return;
+                  }
+                  if (isWrongChain) {
+                    switchToReef().catch(() => {});
+                    return;
+                  }
+                  if (unstakeRequiresApproval) {
+                    approveUnstakeToken().catch(() => {});
+                    return;
+                  }
+                  unstakeLiquidity().catch(() => {});
+                }}
               />
             </div>
           )}

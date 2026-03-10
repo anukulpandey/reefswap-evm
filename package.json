@@ -8,7 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "notify:telegram": "bash scripts/telegram-notify.sh",
-    "notify:telegram:test": "bash scripts/telegram-notify.sh \"✅ Reefswap task completed\""
+    "notify:telegram:test": "bash scripts/telegram-notify.sh \"✅ Reefswap task completed\"",
+    "prompt:telegram": "node scripts/telegram-prompt.mjs",
+    "alert:human": "bash scripts/human-intervention-alert.sh"
   },
   "dependencies": {
     "@metamask/sdk": "^0.33.1",

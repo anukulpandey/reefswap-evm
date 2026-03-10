@@ -1405,13 +1405,15 @@ const App = () => {
     return (
       <div
         style={{
-          maxWidth: 460,
-          margin: '8px auto',
+          width: '100%',
+          maxWidth: '100%',
+          margin: '8px 0',
           borderRadius: 16,
           border: '1px solid #d9d0e8',
           background: '#f8f6fd',
           boxShadow: '0 10px 24px rgba(87, 63, 141, 0.14)',
           padding: '8px 8px 4px',
+          boxSizing: 'border-box',
         }}
       >
         <div
@@ -1886,7 +1888,20 @@ const App = () => {
     </>
   );
 
-  const creatorRouteView = <CreatorPage />;
+  const handleCreatorTokenCreated = useCallback((token: TokenOption) => {
+    setTokens((current) => {
+      const nextKey = dedupeTokenKey(token);
+      if (current.some((item) => dedupeTokenKey(item) === nextKey)) return current;
+      return [...current, token];
+    });
+  }, []);
+
+  const creatorRouteView = (
+    <CreatorPage
+      onTokenCreated={handleCreatorTokenCreated}
+      onCreatePool={() => navigateRoute('pools')}
+    />
+  );
 
   const selectedPool = useMemo(
     () => subgraphPairs.find((pair) => pair.id.toLowerCase() === (selectedPoolId || '').toLowerCase()) || subgraphPairs[0] || null,
