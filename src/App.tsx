@@ -46,8 +46,8 @@ const SLIPPAGE_SLIDER_HELPERS = [
 
 type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token' | 'chart' | 'pool-detail';
 
-const isWrapPairSelection = (a: TokenOption, b: TokenOption): boolean =>
-  (a.isNative && b.address === contracts.wrappedReef) || (b.isNative && a.address === contracts.wrappedReef);
+const isWrapPairSelection = (a: TokenOption, b: TokenOption, wrappedTokenAddress: Address): boolean =>
+  (a.isNative && sameAddress(b.address, wrappedTokenAddress)) || (b.isNative && sameAddress(a.address, wrappedTokenAddress));
 
 const NAV_ROUTES: { route: AppRoute; label: string; path: string }[] = [
   { route: 'tokens', label: 'Tokens', path: '/' },
@@ -125,6 +125,9 @@ const formatTokenCount = (value: string | number | null | undefined): string => 
 const dedupeTokenKey = (token: TokenOption): string => (
   token.isNative ? 'native' : (token.address || token.symbol).toLowerCase()
 );
+
+const sameAddress = (a: Address | string | null | undefined, b: Address | string | null | undefined): boolean =>
+  String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 const initialInputToken = defaultTokens[0];
 const initialOutputToken = defaultTokens.find((token) => token.address === contracts.wrappedReef) || defaultTokens[0];
@@ -235,6 +238,15 @@ const App = () => {
     Uik.notify.danger({ message });
   }, []);
 
+  const wrappedReefAddress = routerWrappedTokenSource === 'loading' ? contracts.wrappedReef : routerWrappedToken;
+  const wrappedTokenOption = useMemo<TokenOption>(() => ({
+    symbol: 'WREEF',
+    name: 'Wrapped Reef',
+    decimals: 18,
+    address: wrappedReefAddress,
+    isNative: false,
+  }), [wrappedReefAddress]);
+
   useEffect(() => {
     if (!subgraphTokens.length) return;
 
@@ -281,27 +293,63 @@ const App = () => {
     });
   }, [subgraphPairs]);
 
+  useEffect(() => {
+    if (routerWrappedTokenSource === 'loading') return;
+
+    setTokens((current) => {
+      const filtered = current.filter((token) => {
+        if (token.isNative || !token.address) return true;
+        if (sameAddress(token.address, wrappedReefAddress)) return true;
+        return token.symbol !== 'WREEF';
+      });
+
+      const hasWrapped = filtered.some((token) => !token.isNative && sameAddress(token.address, wrappedReefAddress));
+      if (hasWrapped) return filtered;
+
+      const nativeToken = filtered.find((token) => token.isNative) || nativeReef;
+      const rest = filtered.filter((token) => !token.isNative);
+      return [nativeToken, wrappedTokenOption, ...rest];
+    });
+
+    setTokenIn((current) => {
+      if (!current.isNative && current.symbol === 'WREEF' && !sameAddress(current.address, wrappedReefAddress)) {
+        return wrappedTokenOption;
+      }
+      return current;
+    });
+
+    setTokenOut((current) => {
+      if (!current.isNative && current.symbol === 'WREEF' && !sameAddress(current.address, wrappedReefAddress)) {
+        return wrappedTokenOption;
+      }
+      return current;
+    });
+  }, [routerWrappedTokenSource, wrappedReefAddress, wrappedTokenOption]);
+
   const isWrongChain = isConnected && chainId !== reefChain.id;
-  const isWrapPair = useMemo(() => isWrapPairSelection(tokenIn, tokenOut), [tokenIn, tokenOut]);
+  const isWrapPair = useMemo(
+    () => isWrapPairSelection(tokenIn, tokenOut, wrappedReefAddress),
+    [tokenIn, tokenOut, wrappedReefAddress],
+  );
 
   const swapPath = useMemo(() => {
     if (isWrapPair) return [] as Address[];
 
-    const inputAddress = tokenIn.isNative ? contracts.wrappedReef : tokenIn.address;
-    const outputAddress = tokenOut.isNative ? contracts.wrappedReef : tokenOut.address;
+    const inputAddress = tokenIn.isNative ? wrappedReefAddress : tokenIn.address;
+    const outputAddress = tokenOut.isNative ? wrappedReefAddress : tokenOut.address;
 
     if (!inputAddress || !outputAddress) return [] as Address[];
-    if (inputAddress === outputAddress) return [] as Address[];
+    if (sameAddress(inputAddress, outputAddress)) return [] as Address[];
 
     if (!tokenIn.isNative && !tokenOut.isNative) {
-      if (inputAddress === contracts.wrappedReef || outputAddress === contracts.wrappedReef) {
+      if (sameAddress(inputAddress, wrappedReefAddress) || sameAddress(outputAddress, wrappedReefAddress)) {
         return [inputAddress, outputAddress];
       }
-      return [inputAddress, contracts.wrappedReef, outputAddress];
+      return [inputAddress, wrappedReefAddress, outputAddress];
     }
 
     return [inputAddress, outputAddress];
-  }, [isWrapPair, tokenIn, tokenOut]);
+  }, [isWrapPair, tokenIn, tokenOut, wrappedReefAddress]);
 
   const parsedAmountIn = useMemo(() => {
     if (!amountInText) return 0n;
@@ -334,13 +382,13 @@ const App = () => {
     if (isWrapPair) return `${tokenIn.symbol} -> ${tokenOut.symbol} (1:1 wrap)`;
 
     return swapPath
-      .map(
-        (addressPart) =>
-          tokens.find((token) => token.address === addressPart)?.symbol ||
-          (addressPart === contracts.wrappedReef ? 'WREEF' : shortAddress(addressPart)),
+          .map(
+            (addressPart) =>
+              tokens.find((token) => token.address === addressPart)?.symbol ||
+          (sameAddress(addressPart, wrappedReefAddress) ? 'WREEF' : shortAddress(addressPart)),
       )
       .join(' -> ');
-  }, [isWrapPair, swapPath, tokenIn.symbol, tokenOut.symbol, tokens]);
+  }, [isWrapPair, swapPath, tokenIn.symbol, tokenOut.symbol, tokens, wrappedReefAddress]);
 
   const refreshChainState = useCallback(async () => {
     if (!publicClient || !address) {
@@ -365,12 +413,16 @@ const App = () => {
 
         if (!token.address) return 0n;
 
-        return publicClient.readContract({
-          address: token.address,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [address],
-        });
+        try {
+          return await publicClient.readContract({
+            address: token.address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          });
+        } catch {
+          return 0n;
+        }
       };
 
       const [inputBalance, outputBalance] = await Promise.all([readTokenBalance(tokenIn), readTokenBalance(tokenOut)]);
@@ -380,13 +432,17 @@ const App = () => {
       if (isWrapPair || tokenIn.isNative || !tokenIn.address) {
         setAllowance(MAX_APPROVAL);
       } else {
-        const allowanceValue = await publicClient.readContract({
-          address: tokenIn.address,
-          abi: erc20Abi,
-          functionName: 'allowance',
-          args: [address, contracts.router],
-        });
-        setAllowance(allowanceValue);
+        try {
+          const allowanceValue = await publicClient.readContract({
+            address: tokenIn.address,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [address, contracts.router],
+          });
+          setAllowance(allowanceValue);
+        } catch {
+          setAllowance(0n);
+        }
       }
 
       if (!isWrapPair && swapPath.length >= 2) {
@@ -616,7 +672,7 @@ const App = () => {
         hash = await walletClient.writeContract({
           account: address,
           chain: reefChain,
-          address: contracts.wrappedReef,
+          address: wrappedReefAddress,
           abi: wrappedReefAbi,
           functionName: 'deposit',
           args: [],
@@ -626,7 +682,7 @@ const App = () => {
         hash = await walletClient.writeContract({
           account: address,
           chain: reefChain,
-          address: contracts.wrappedReef,
+          address: wrappedReefAddress,
           abi: wrappedReefAbi,
           functionName: 'withdraw',
           args: [parsedAmountIn],
