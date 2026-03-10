@@ -5,12 +5,16 @@ import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
 import { useAccount } from 'wagmi';
 import { useReefTransactions } from '@/hooks/useReefTransactions';
 import { useReefExplorer } from '@/hooks/useReefExplorer';
+import { useEffect, useMemo, useState } from 'react';
+
+const ITEMS_PER_PAGE = 8;
 
 const ActivityPanel = () => {
   const { showBalances } = useBalanceVisibility();
   const { address } = useAccount();
   const { transactions, isLoading } = useReefTransactions(address);
   const { explorerUrl } = useReefExplorer(address);
+  const [page, setPage] = useState(1);
   const txExplorerUrl = (hash: string) => `${explorerUrl}/tx/${hash}`;
 
   const formatAmount = (value: number) => {
@@ -34,6 +38,18 @@ const ActivityPanel = () => {
       maximumFractionDigits: 2,
     }).format(value);
   };
+
+  const totalPages = Math.max(1, Math.ceil(transactions.length / ITEMS_PER_PAGE));
+  const pagedTransactions = useMemo(() => {
+    const start = (page - 1) * ITEMS_PER_PAGE;
+    return transactions.slice(start, start + ITEMS_PER_PAGE);
+  }, [page, transactions]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   return (
     <Card className="bg-transparent rounded-2xl border-0 p-0 shadow-none">
@@ -60,7 +76,7 @@ const ActivityPanel = () => {
             No transactions yet
           </div>
         ) : (
-          transactions.map((tx, index) => (
+          pagedTransactions.map((tx, index) => (
             <div key={tx.id}>
               {tx.txHash ? (
                 <a
@@ -72,7 +88,7 @@ const ActivityPanel = () => {
                   <div
                     className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
                       index === 0 ? 'rounded-t-3xl' : ''
-                    } ${index === transactions.length - 1 ? 'rounded-b-3xl' : ''}`}
+                    } ${index === pagedTransactions.length - 1 ? 'rounded-b-3xl' : ''}`}
                   >
                     <div className="flex items-center gap-4">
                       <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
@@ -112,7 +128,7 @@ const ActivityPanel = () => {
                 <div
                   className={`flex items-center justify-between px-6 py-5 ${
                     index === 0 ? 'rounded-t-3xl' : ''
-                  } ${index === transactions.length - 1 ? 'rounded-b-3xl' : ''}`}
+                  } ${index === pagedTransactions.length - 1 ? 'rounded-b-3xl' : ''}`}
                 >
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
@@ -148,13 +164,52 @@ const ActivityPanel = () => {
                   </div>
                 </div>
               )}
-              {index < transactions.length - 1 && (
+              {index < pagedTransactions.length - 1 && (
                 <div className="mx-6 h-px bg-[#ebe6f4]" />
               )}
             </div>
           ))
         )}
       </div>
+
+      {transactions.length > ITEMS_PER_PAGE ? (
+        <div className="mt-4 flex items-center justify-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={page === 1}
+            className="h-8 min-w-8 rounded-[10px] bg-[#e2dcea] px-2.5 text-sm font-semibold text-[#4a4260] disabled:opacity-45"
+          >
+            ‹
+          </button>
+          {Array.from({ length: totalPages }, (_, index) => {
+            const pageNumber = index + 1;
+            const isActive = pageNumber === page;
+            return (
+              <button
+                key={pageNumber}
+                type="button"
+                onClick={() => setPage(pageNumber)}
+                className={`h-8 min-w-8 rounded-[10px] px-2.5 text-sm font-semibold ${
+                  isActive
+                    ? 'bg-gradient-to-r from-[#a93185] to-[#7a32b4] text-white'
+                    : 'bg-[#e2dcea] text-[#4a4260]'
+                }`}
+              >
+                {pageNumber}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            disabled={page === totalPages}
+            className="h-8 min-w-8 rounded-[10px] bg-[#e2dcea] px-2.5 text-sm font-semibold text-[#4a4260] disabled:opacity-45"
+          >
+            ›
+          </button>
+        </div>
+      ) : null}
     </Card>
   );
 };
