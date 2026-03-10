@@ -13,8 +13,27 @@ const ActivityPanel = () => {
   const { explorerUrl } = useReefExplorer(address);
   const txExplorerUrl = (hash: string) => `${explorerUrl}/tx/${encodeURIComponent(hash)}`;
 
-  const formatAmount = (value: number) =>
-    new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+  const formatAmount = (value: number) => {
+    const absolute = Math.abs(value);
+    if (absolute >= 1_000) {
+      return new Intl.NumberFormat('en-US', {
+        notation: 'compact',
+        maximumFractionDigits: 2,
+      }).format(value);
+    }
+
+    if (absolute > 0 && absolute < 1) {
+      return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 6,
+      }).format(value);
+    }
+
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  };
 
   return (
     <Card className="bg-transparent rounded-2xl border-0 p-0 shadow-none">
