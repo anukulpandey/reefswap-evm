@@ -8,6 +8,8 @@ const REEF_DECIMALS = 18;
 export interface ReefTransaction {
   id: string;
   txHash: string | null;
+  tokenAddress: string | null;
+  isNativeAsset: boolean;
   type: 'sent' | 'received';
   amount: number;
   symbol: string;
@@ -46,7 +48,7 @@ type ExplorerAddressTokenTransfer = {
   from?: ExplorerAddressRef | null;
   to?: ExplorerAddressRef | null;
   total?: { value?: string | null; decimals?: string | number | null } | null;
-  token?: { symbol?: string | null } | null;
+  token?: { symbol?: string | null; address_hash?: string | null; address?: string | null } | null;
   timestamp?: string | null;
   log_index?: number | null;
   token_type?: string | null;
@@ -133,6 +135,8 @@ export function useReefTransactions(address: string | undefined) {
             return {
               id: `native:${tx.hash}`,
               txHash: tx.hash,
+              tokenAddress: null,
+              isNativeAsset: true,
               type: isSent ? 'sent' : 'received',
               amount: toFiniteNumber(valueRaw, REEF_DECIMALS),
               symbol: 'REEF',
@@ -165,12 +169,14 @@ export function useReefTransactions(address: string | undefined) {
             return {
               id: `erc20:${transfer.transaction_hash || 'unknown'}:${String(transfer.log_index ?? index)}`,
               txHash: transfer.transaction_hash || null,
+              tokenAddress: transfer.token?.address_hash || transfer.token?.address || null,
+              isNativeAsset: false,
               type: fromLower === lowerAddress ? 'sent' : 'received',
               amount,
               symbol,
               date,
               time,
-              icon: symbol === 'REEF' ? 'reef' : symbol.charAt(0),
+              icon: symbol.charAt(0),
               timestampMs,
             } satisfies MappedTransaction;
           })

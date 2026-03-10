@@ -97,7 +97,7 @@ const ActivityPanel = () => {
                         {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
                       </span>
                       {showBalances && (
-                        tx.symbol === 'REEF' ? (
+                        tx.isNativeAsset ? (
                           <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
                         ) : (
                           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">
@@ -137,7 +137,7 @@ const ActivityPanel = () => {
                       {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
                     </span>
                     {showBalances && (
-                      tx.symbol === 'REEF' ? (
+                      tx.isNativeAsset ? (
                         <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
                       ) : (
                         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">

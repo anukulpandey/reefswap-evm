@@ -12,7 +12,7 @@ import { useReefBalance } from '@/hooks/useReefBalance';
 import { useReefPrice } from '@/hooks/useReefPrice';
 import { formatUnits } from 'viem';
 import { erc20Abi } from '@/lib/abi';
-import { reefChain } from '@/lib/config';
+import { contracts, reefChain } from '@/lib/config';
 import { tokenKey, type TokenOption } from '@/lib/tokens';
 
 interface TokenListProps {
@@ -24,6 +24,9 @@ const toFinite = (value: string): number => {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const sameAddress = (a?: string | null, b?: string | null): boolean =>
+  String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
 const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
   const [sendModalOpen, setSendModalOpen] = useState(false);
@@ -106,14 +109,14 @@ const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
         const key = tokenKey(token);
         const chainBalance = balancesByTokenKey[key];
         const balance = token.isNative ? reefBalance : (chainBalance ?? 0);
-        const isReefLike = token.symbol === 'REEF' || token.symbol === 'WREEF';
+        const isReefLike = token.isNative || sameAddress(token.address, contracts.wrappedReef);
         const price = isReefLike ? reefPrice : 0;
 
         return {
           id: key,
           name: token.name,
           symbol: token.symbol,
-          icon: token.symbol === 'REEF' ? 'reef' : token.symbol.charAt(0),
+          icon: token.isNative ? 'reef' : token.symbol.charAt(0),
           price,
           priceChange: isReefLike ? change24h : 0,
           balance,
