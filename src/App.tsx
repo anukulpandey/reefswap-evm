@@ -1034,7 +1034,7 @@ const App = () => {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
             <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
               {tokenIn.isNative ? (
                 <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1069,7 +1069,19 @@ const App = () => {
             onChange={(e) => setAmountInText(normalizeInput(e.target.value))}
             inputMode="decimal"
             placeholder="0.0"
-            style={{ background: 'none', border: 'none', outline: 'none', fontSize: 24, fontWeight: 600, color: 'var(--text-light)', textAlign: 'right', width: 130, minWidth: 0 }}
+            style={{
+              background: 'none',
+              border: 'none',
+              outline: 'none',
+              fontSize: 24,
+              fontWeight: 600,
+              color: 'var(--text-light)',
+              textAlign: 'right',
+              width: 'clamp(160px, 38%, 240px)',
+              minWidth: 0,
+              flexShrink: 0,
+              fontVariantNumeric: 'tabular-nums',
+            }}
           />
         </div>
 
@@ -1107,7 +1119,7 @@ const App = () => {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
             <div style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
               <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
                 {tokenOut.isNative ? <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} /> : tokenOut.symbol.charAt(0)}
@@ -1135,7 +1147,19 @@ const App = () => {
             value={amountOutText}
             readOnly
             placeholder="0.0"
-            style={{ background: 'none', border: 'none', outline: 'none', fontSize: 24, fontWeight: 600, color: 'var(--text-light)', textAlign: 'right', width: 130, minWidth: 0 }}
+            style={{
+              background: 'none',
+              border: 'none',
+              outline: 'none',
+              fontSize: 24,
+              fontWeight: 600,
+              color: 'var(--text-light)',
+              textAlign: 'right',
+              width: 'clamp(160px, 38%, 240px)',
+              minWidth: 0,
+              flexShrink: 0,
+              fontVariantNumeric: 'tabular-nums',
+            }}
           />
         </div>
 
