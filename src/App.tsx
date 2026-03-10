@@ -10,7 +10,7 @@ import {
 } from 'wagmi';
 import { Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
-import { erc20Abi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
+import { erc20Abi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
@@ -129,6 +129,12 @@ const dedupeTokenKey = (token: TokenOption): string => (
 const sameAddress = (a: Address | string | null | undefined, b: Address | string | null | undefined): boolean =>
   String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
+const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint => {
+  if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
+  const amountInWithFee = amountIn * 997n;
+  return (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
+};
+
 const initialInputToken = defaultTokens[0];
 const initialOutputToken = defaultTokens.find((token) => token.address === contracts.wrappedReef) || defaultTokens[0];
 
@@ -215,6 +221,8 @@ const App = () => {
   const [isSwapping, setIsSwapping] = useState(false);
 
   const [quoteError, setQuoteError] = useState('');
+  const [quoteSource, setQuoteSource] = useState<'none' | 'router' | 'pair-fallback'>('none');
+  const [quoteNote, setQuoteNote] = useState('');
   const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
 
   const [importAddress, setImportAddress] = useState('');
@@ -363,6 +371,28 @@ const App = () => {
     return [inputAddress, outputAddress];
   }, [isWrapPair, tokenIn, tokenOut, wrappedReefAddress]);
 
+  const directPairFromSubgraph = useMemo(() => {
+    if (swapPath.length !== 2 || isWrapPair) return null;
+
+    const tokenA = swapPath[0].toLowerCase();
+    const tokenB = swapPath[1].toLowerCase();
+
+    return subgraphPairs.find((pair) => {
+      const pairToken0 = pair.token0.id.toLowerCase();
+      const pairToken1 = pair.token1.id.toLowerCase();
+      return (pairToken0 === tokenA && pairToken1 === tokenB) || (pairToken0 === tokenB && pairToken1 === tokenA);
+    }) || null;
+  }, [isWrapPair, subgraphPairs, swapPath]);
+
+  const directPairAddress = useMemo(() => {
+    if (!directPairFromSubgraph || !isAddress(directPairFromSubgraph.id)) return null;
+    return getAddress(directPairFromSubgraph.id);
+  }, [directPairFromSubgraph]);
+
+  const swapSpender = useMemo(() => (
+    quoteSource === 'pair-fallback' && directPairAddress ? directPairAddress : contracts.router
+  ), [directPairAddress, quoteSource]);
+
   const parsedAmountIn = useMemo(() => {
     if (!amountInText) return 0n;
     try {
@@ -448,7 +478,7 @@ const App = () => {
             address: tokenIn.address,
             abi: erc20Abi,
             functionName: 'allowance',
-            args: [address, contracts.router],
+            args: [address, swapSpender],
           });
           setAllowance(allowanceValue);
         } catch {
@@ -461,7 +491,7 @@ const App = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [address, isWrapPair, publicClient, showErrorToast, swapPath, tokenIn, tokenOut]);
+  }, [address, isWrapPair, publicClient, showErrorToast, swapPath, swapSpender, tokenIn, tokenOut]);
 
   useEffect(() => {
     if (!publicClient) {
@@ -553,6 +583,8 @@ const App = () => {
       setAmountOutText('');
       setQuotedOutRaw(0n);
       setQuoteError('');
+      setQuoteNote('');
+      setQuoteSource('none');
       return;
     }
 
@@ -560,6 +592,8 @@ const App = () => {
       setAmountOutText(formatDisplayAmount(parsedAmountIn, tokenOut.decimals, 8));
       setQuotedOutRaw(parsedAmountIn);
       setQuoteError('');
+      setQuoteNote('');
+      setQuoteSource('router');
       setIsQuoting(false);
       return;
     }
@@ -568,11 +602,14 @@ const App = () => {
       setAmountOutText('');
       setQuotedOutRaw(0n);
       setQuoteError('');
+      setQuoteNote('');
+      setQuoteSource('none');
       return;
     }
 
     setIsQuoting(true);
     setQuoteError('');
+    setQuoteNote('');
 
     const timer = setTimeout(() => {
       publicClient
@@ -586,17 +623,61 @@ const App = () => {
           const output = amounts[amounts.length - 1];
           setQuotedOutRaw(output);
           setAmountOutText(formatDisplayAmount(output, tokenOut.decimals, 8));
+          setQuoteSource('router');
+          setQuoteNote('');
         })
         .catch(() => {
-          setQuotedOutRaw(0n);
-          setAmountOutText('');
-          setQuoteError('No route found on router for this pair and amount.');
+          const canUsePairFallback = !tokenIn.isNative && !tokenOut.isNative && swapPath.length === 2 && directPairFromSubgraph;
+
+          if (!canUsePairFallback) {
+            setQuotedOutRaw(0n);
+            setAmountOutText('');
+            setQuoteSource('none');
+            setQuoteError('No route found on router for this pair and amount.');
+            return;
+          }
+
+          try {
+            const pair = directPairFromSubgraph;
+            if (!pair) throw new Error('pair fallback missing');
+            const inputLower = swapPath[0].toLowerCase();
+            const pairToken0 = pair.token0.id.toLowerCase();
+            const pairToken1 = pair.token1.id.toLowerCase();
+
+            const token0Decimals = Number.parseInt(pair.token0.decimals, 10);
+            const token1Decimals = Number.parseInt(pair.token1.decimals, 10);
+            if (!Number.isInteger(token0Decimals) || !Number.isInteger(token1Decimals)) {
+              throw new Error('invalid token decimals');
+            }
+
+            const reserve0Raw = parseUnits(pair.reserve0, token0Decimals);
+            const reserve1Raw = parseUnits(pair.reserve1, token1Decimals);
+
+            const reserveIn = inputLower === pairToken0 ? reserve0Raw : reserve1Raw;
+            const reserveOut = inputLower === pairToken0 ? reserve1Raw : reserve0Raw;
+
+            const output = getAmountOut(parsedAmountIn, reserveIn, reserveOut);
+            if (output <= 0n) {
+              throw new Error('insufficient reserve output');
+            }
+
+            setQuotedOutRaw(output);
+            setAmountOutText(formatDisplayAmount(output, tokenOut.decimals, 8));
+            setQuoteError('');
+            setQuoteSource('pair-fallback');
+            setQuoteNote('Router quote unavailable; using pair reserve fallback.');
+          } catch {
+            setQuotedOutRaw(0n);
+            setAmountOutText('');
+            setQuoteSource('none');
+            setQuoteError('No route found on router for this pair and amount.');
+          }
         })
         .finally(() => setIsQuoting(false));
     }, 450);
 
     return () => clearTimeout(timer);
-  }, [isWrapPair, parsedAmountIn, publicClient, swapPath, tokenOut.decimals]);
+  }, [directPairFromSubgraph, isWrapPair, parsedAmountIn, publicClient, swapPath, tokenIn.isNative, tokenOut.decimals, tokenOut.isNative]);
 
   useEffect(() => {
     const syncFromLocation = () => {
@@ -678,7 +759,7 @@ const App = () => {
         address: tokenIn.address,
         abi: erc20Abi,
         functionName: 'approve',
-        args: [contracts.router, MAX_APPROVAL],
+        args: [swapSpender, MAX_APPROVAL],
       });
 
       setLastTxHash(hash);
@@ -739,6 +820,40 @@ const App = () => {
           functionName: 'withdraw',
           args: [parsedAmountIn],
         });
+      } else if (
+        quoteSource === 'pair-fallback' &&
+        directPairAddress &&
+        directPairFromSubgraph &&
+        !tokenIn.isNative &&
+        !tokenOut.isNative &&
+        swapPath.length === 2
+      ) {
+        const transferToPairHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: tokenIn.address as Address,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [directPairAddress, parsedAmountIn],
+        });
+
+        showInfoToast(`Input transfer submitted.\nTx: ${shortAddress(transferToPairHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: transferToPairHash });
+
+        const pairToken0 = directPairFromSubgraph.token0.id.toLowerCase();
+        const tokenInIsToken0 = pairToken0 === swapPath[0].toLowerCase();
+        const desiredOut = quotedOutRaw;
+        const amount0Out = tokenInIsToken0 ? 0n : desiredOut;
+        const amount1Out = tokenInIsToken0 ? desiredOut : 0n;
+
+        hash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: directPairAddress,
+          abi: reefswapPairAbi,
+          functionName: 'swap',
+          args: [amount0Out, amount1Out, address, '0x'],
+        });
       } else if (tokenIn.isNative) {
         hash = await walletClient.writeContract({
           account: address,
@@ -790,6 +905,8 @@ const App = () => {
     setAmountInText('');
     setAmountOutText('');
     setQuoteError('');
+    setQuoteNote('');
+    setQuoteSource('none');
   };
 
   const importToken = async () => {
@@ -1180,6 +1297,12 @@ const App = () => {
             <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{clampedSlippage.toFixed(1)}%</span>
           </div>
         </div>
+        {quoteError ? (
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#b24471' }}>{quoteError}</p>
+        ) : null}
+        {!quoteError && quoteNote ? (
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6a5b8b' }}>{quoteNote}</p>
+        ) : null}
 
         {/* Slippage slider */}
         <div style={{ marginBottom: 20 }}>
@@ -1235,6 +1358,10 @@ const App = () => {
             <li>
               <span>Router02</span>
               <code>{contracts.router}</code>
+            </li>
+            <li>
+              <span>Swap Spender</span>
+              <code>{swapSpender}</code>
             </li>
           </ul>
           {routerWrappedTokenSource === 'fallback' ? (

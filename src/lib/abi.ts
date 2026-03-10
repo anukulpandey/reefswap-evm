@@ -146,3 +146,32 @@ export const reefswapFactoryAbi = [
     outputs: [{ name: 'pair', type: 'address' }],
   },
 ] as const;
+
+export const reefswapPairAbi = [
+  {
+    type: 'function',
+    name: 'token0',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'token1',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'swap',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount0Out', type: 'uint256' },
+      { name: 'amount1Out', type: 'uint256' },
+      { name: 'to', type: 'address' },
+      { name: 'data', type: 'bytes' },
+    ],
+    outputs: [],
+  },
+] as const;
