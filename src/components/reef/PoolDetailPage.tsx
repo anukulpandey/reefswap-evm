@@ -5,6 +5,8 @@ import { faArrowsRotate, faRightLeft } from '@fortawesome/free-solid-svg-icons';
 import {
   AreaSeries,
   HistogramSeries,
+  LineStyle,
+  LineType,
   createChart,
   type IChartApi,
   type UTCTimestamp,
@@ -94,6 +96,22 @@ const deriveSwapPrice = (swap: SubgraphSwap): number => {
   return token1Delta / token0Delta;
 };
 
+const formatAxisValue = (chartTab: ChartTab, value: number): string => {
+  if (chartTab === 'price') {
+    const decimals = Math.abs(value) < 0.01 ? 6 : (Math.abs(value) < 1 ? 4 : 2);
+    return value.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: decimals,
+    });
+  }
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+};
+
 const aggregatePointsByBucket = (points: ChartPoint[], bucketSeconds: number, mode: AggregationMode): ChartPoint[] => {
   if (!points.length) return [];
 
@@ -114,6 +132,29 @@ const aggregatePointsByBucket = (points: ChartPoint[], bucketSeconds: number, mo
     .map(([time, values]) => ({ time, value: mode === 'sum' ? values.sum : values.last }));
 };
 
+const fillMissingBuckets = (points: ChartPoint[], bucketSeconds: number, mode: AggregationMode): ChartPoint[] => {
+  if (!points.length) return [];
+
+  const bucketMap = new Map<number, number>();
+  points.forEach((point) => bucketMap.set(point.time, point.value));
+
+  const start = points[0].time;
+  const end = points[points.length - 1].time;
+  let carryValue = points[0].value;
+  const filled: ChartPoint[] = [];
+
+  for (let cursor = start; cursor <= end; cursor += bucketSeconds) {
+    if (bucketMap.has(cursor)) {
+      carryValue = bucketMap.get(cursor) as number;
+      filled.push({ time: cursor, value: carryValue });
+      continue;
+    }
+    filled.push({ time: cursor, value: mode === 'sum' ? 0 : carryValue });
+  }
+
+  return filled;
+};
+
 const slicePointsForTimeframe = (
   points: ChartPoint[],
   timeframe: Timeframe,
@@ -127,7 +168,13 @@ const slicePointsForTimeframe = (
   const startTime = endTime - lookback;
 
   const inRange = points.filter((point) => point.time >= startTime && point.time <= endTime);
-  if (!preserveContinuity) return inRange;
+  if (!preserveContinuity) {
+    return [
+      { time: startTime, value: 0 },
+      ...inRange,
+      { time: endTime, value: 0 },
+    ].sort((a, b) => a.time - b.time);
+  }
 
   const withContinuity = [...inRange];
   const previousPoint = [...points].reverse().find((point) => point.time < startTime);
@@ -182,27 +229,34 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: 500,
+      height: 560,
       layout: {
         background: { type: 'solid', color: '#ece9f4' },
-        textColor: '#8e899c',
-        fontSize: 15,
+        textColor: '#7f7a92',
+        fontSize: 14,
       },
       grid: {
-        vertLines: { color: '#d4ccdf' },
-        horzLines: { color: '#d4ccdf' },
+        vertLines: { color: '#cfd0de' },
+        horzLines: { color: '#cfd0de' },
       },
       crosshair: {
-        vertLine: { color: '#ab36bf', labelBackgroundColor: '#ab36bf' },
-        horzLine: { color: '#ab36bf', labelBackgroundColor: '#ab36bf' },
+        vertLine: { color: '#a52ec0', labelBackgroundColor: '#a52ec0', style: LineStyle.Dashed, width: 1 },
+        horzLine: { color: '#a52ec0', labelBackgroundColor: '#a52ec0', style: LineStyle.Dashed, width: 1 },
       },
+      leftPriceScale: { visible: false },
       rightPriceScale: {
-        borderColor: '#d4ccdf',
+        borderColor: '#b9bdd2',
+        minimumWidth: 90,
+        scaleMargins: { top: 0.08, bottom: 0.06 },
       },
       timeScale: {
-        borderColor: '#d4ccdf',
+        borderColor: '#b9bdd2',
         timeVisible: timeframe === '1h' || timeframe === '1D',
-        secondsVisible: timeframe === '1h',
+        secondsVisible: false,
+        rightOffset: 2,
+        barSpacing: timeframe === '1h' ? 18 : 16,
+        minBarSpacing: 8,
+        fixRightEdge: false,
       },
     });
     chartRef.current = chart;
@@ -215,7 +269,12 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
     if (chartTab === 'volume' || chartTab === 'fees') {
       const histogramSeries = chart.addSeries(HistogramSeries, {
         color: chartTab === 'fees' ? '#d248a3' : '#7f44bf',
-        priceFormat: { type: 'volume' },
+        priceFormat: {
+          type: 'custom',
+          formatter: (value: number) => formatAxisValue(chartTab, value),
+          minMove: 0.01,
+        },
+        lastValueVisible: true,
         priceLineVisible: false,
       });
       histogramSeries.setData(seriesData.map((item, index) => {
@@ -232,9 +291,19 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
       const areaSeries = chart.addSeries(AreaSeries, {
         lineColor: '#ac35c1',
         lineWidth: 3,
-        topColor: 'rgba(172, 53, 193, 0.35)',
-        bottomColor: 'rgba(172, 53, 193, 0.04)',
+        lineType: LineType.WithSteps,
+        topColor: 'rgba(172, 53, 193, 0.30)',
+        bottomColor: 'rgba(172, 53, 193, 0.06)',
+        priceFormat: {
+          type: 'custom',
+          formatter: (value: number) => formatAxisValue(chartTab, value),
+          minMove: chartTab === 'price' ? 0.000001 : 0.01,
+        },
+        lastValueVisible: true,
         priceLineVisible: true,
+        priceLineColor: '#a52ec0',
+        priceLineStyle: LineStyle.Dotted,
+        priceLineWidth: 2,
       });
       areaSeries.setData(seriesData);
     }
@@ -388,12 +457,13 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
       TIMEFRAME_BUCKET_SECONDS[timeframe],
       aggregationMode,
     );
+    const filledPoints = fillMissingBuckets(bucketedPoints, TIMEFRAME_BUCKET_SECONDS[timeframe], aggregationMode);
 
-    if (bucketedPoints.length >= 2) return bucketedPoints;
-    if (bucketedPoints.length === 1) {
+    if (filledPoints.length >= 2) return filledPoints;
+    if (filledPoints.length === 1) {
       return [
-        bucketedPoints[0],
-        { time: bucketedPoints[0].time + TIMEFRAME_BUCKET_SECONDS[timeframe], value: bucketedPoints[0].value },
+        filledPoints[0],
+        { time: filledPoints[0].time + TIMEFRAME_BUCKET_SECONDS[timeframe], value: filledPoints[0].value },
       ];
     }
 

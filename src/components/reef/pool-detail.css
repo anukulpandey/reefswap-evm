@@ -589,7 +589,7 @@
 
 .pool-detail-chart {
   position: relative;
-  min-height: 500px;
+  min-height: 560px;
   border-radius: 0.9rem;
   border: 1px solid #d4ccdf;
   background: #ece9f4;
@@ -598,11 +598,11 @@
 
 .pool-detail-chart__canvas {
   width: 100%;
-  height: 500px;
+  height: 560px;
 }
 
 .pool-detail-chart__status {
-  min-height: 500px;
+  min-height: 560px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -752,13 +752,13 @@
   }
 
   .pool-detail-chart {
-    min-height: 420px;
+    min-height: 460px;
   }
 
   .pool-detail-chart__canvas,
   .pool-detail-chart__status {
-    height: 420px;
-    min-height: 420px;
+    height: 460px;
+    min-height: 460px;
   }
 
   .pool-detail-chart__summary {
