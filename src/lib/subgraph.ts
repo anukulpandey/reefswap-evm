@@ -29,7 +29,10 @@ export type SubgraphPair = {
   reserve0: string;
   reserve1: string;
   reserveUSD: string;
+  volumeToken0: string;
+  volumeToken1: string;
   volumeUSD: string;
+  untrackedVolumeUSD: string;
   txCount: string;
   token0Price: string;
   token1Price: string;
@@ -78,7 +81,10 @@ const SUBGRAPH_PAIRS_QUERY = `
       reserve0
       reserve1
       reserveUSD
+      volumeToken0
+      volumeToken1
       volumeUSD
+      untrackedVolumeUSD
       txCount
       token0Price
       token1Price
@@ -196,4 +202,3 @@ export const fetchSubgraphPairTransactions = async (pairId: string, first = 20):
   },
   { pairId: string; first: number }
 >(SUBGRAPH_PAIR_TRANSACTIONS_QUERY, { pairId: pairId.toLowerCase(), first });
-

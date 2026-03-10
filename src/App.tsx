@@ -62,6 +62,13 @@ type UserPoolPosition = {
   token1Amount: number;
 };
 
+type PairUsdMetrics = {
+  reserveUsd: number;
+  volumeUsd: number;
+  token0UsdPrice: number;
+  token1UsdPrice: number;
+};
+
 const isWrapPairSelection = (a: TokenOption, b: TokenOption, wrappedTokenAddress: Address): boolean =>
   (a.isNative && sameAddress(b.address, wrappedTokenAddress)) || (b.isNative && sameAddress(a.address, wrappedTokenAddress));
 
@@ -247,6 +254,11 @@ const dedupeTokenKey = (token: TokenOption): string => (
 const sameAddress = (a: Address | string | null | undefined, b: Address | string | null | undefined): boolean =>
   String(a || '').toLowerCase() === String(b || '').toLowerCase();
 
+const isReefLikeSymbol = (symbol: string | null | undefined): boolean => {
+  const normalized = String(symbol || '').trim().toUpperCase();
+  return normalized === 'REEF' || normalized === 'WREEF';
+};
+
 const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint => {
   if (amountIn <= 0n || reserveIn <= 0n || reserveOut <= 0n) return 0n;
   const amountInWithFee = amountIn * 997n;
@@ -396,6 +408,7 @@ const App = () => {
   } = useSubgraphPairs(200);
   const { data: subgraphTokens = [] } = useSubgraphTokens(300);
   const { data: subgraphFactory, refetch: refetchSubgraphFactory } = useSubgraphFactory();
+  const { price: liveReefUsdPrice } = useReefPrice();
 
   const showInfoToast = useCallback((message: string) => {
     Uik.notify.info({ message });
@@ -2420,12 +2433,131 @@ const App = () => {
     () => subgraphPairs.find((pair) => pair.id.toLowerCase() === (selectedPoolId || '').toLowerCase()) || subgraphPairs[0] || null,
     [selectedPoolId, subgraphPairs],
   );
+  const reefUsdPrice = liveReefUsdPrice > 0 ? liveReefUsdPrice : REEF_USD_PRICE;
   const getPairTokenDisplaySymbol = useCallback((token: { id: string; symbol: string }): string => (
     sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'WREEF' ? 'REEF' : token.symbol
   ), [wrappedReefAddress]);
   const isPairTokenReef = useCallback((token: { id: string; symbol: string }): boolean => (
     sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF' || token.symbol.toUpperCase() === 'WREEF'
   ), [wrappedReefAddress]);
+  const pairUsdMetricsById = useMemo<Record<string, PairUsdMetrics>>(() => {
+    const metrics: Record<string, PairUsdMetrics> = {};
+
+    subgraphPairs.forEach((pair) => {
+      const reserve0 = Math.max(0, asNumber(pair.reserve0));
+      const reserve1 = Math.max(0, asNumber(pair.reserve1));
+      const rawReserveUsd = Math.max(0, asNumber(pair.reserveUSD));
+      const rawVolumeUsd = Math.max(0, asNumber(pair.volumeUSD));
+      const rawUntrackedVolumeUsd = Math.max(0, asNumber(pair.untrackedVolumeUSD));
+      const volumeToken0 = Math.max(0, asNumber(pair.volumeToken0));
+      const volumeToken1 = Math.max(0, asNumber(pair.volumeToken1));
+      const token0PriceInToken1 = asNumber(pair.token0Price);
+      const token1PriceInToken0 = asNumber(pair.token1Price);
+      const token0IsCanonicalReef = sameAddress(pair.token0.id, wrappedReefAddress) || isReefLikeSymbol(pair.token0.symbol);
+      const token1IsCanonicalReef = sameAddress(pair.token1.id, wrappedReefAddress) || isReefLikeSymbol(pair.token1.symbol);
+
+      let token0UsdPrice = 0;
+      let token1UsdPrice = 0;
+
+      if (token0IsCanonicalReef) {
+        token0UsdPrice = reefUsdPrice;
+        if (token1PriceInToken0 > 0) {
+          token1UsdPrice = token1PriceInToken0 * token0UsdPrice;
+        }
+      } else if (token1IsCanonicalReef) {
+        token1UsdPrice = reefUsdPrice;
+        if (token0PriceInToken1 > 0) {
+          token0UsdPrice = token0PriceInToken1 * token1UsdPrice;
+        }
+      }
+
+      if ((token0UsdPrice <= 0 || token1UsdPrice <= 0) && rawReserveUsd > 0 && reserve0 > 0 && reserve1 > 0) {
+        if (token0PriceInToken1 > 0) {
+          const token1UsdFromTotal = rawReserveUsd / ((reserve0 * token0PriceInToken1) + reserve1);
+          if (Number.isFinite(token1UsdFromTotal) && token1UsdFromTotal > 0) {
+            token1UsdPrice = token1UsdFromTotal;
+            token0UsdPrice = token0PriceInToken1 * token1UsdFromTotal;
+          }
+        } else if (token1PriceInToken0 > 0) {
+          const token0UsdFromTotal = rawReserveUsd / ((reserve1 * token1PriceInToken0) + reserve0);
+          if (Number.isFinite(token0UsdFromTotal) && token0UsdFromTotal > 0) {
+            token0UsdPrice = token0UsdFromTotal;
+            token1UsdPrice = token1PriceInToken0 * token0UsdFromTotal;
+          }
+        }
+      }
+
+      if (token0UsdPrice <= 0 && token1UsdPrice > 0 && token0PriceInToken1 > 0) {
+        token0UsdPrice = token0PriceInToken1 * token1UsdPrice;
+      }
+      if (token1UsdPrice <= 0 && token0UsdPrice > 0 && token1PriceInToken0 > 0) {
+        token1UsdPrice = token1PriceInToken0 * token0UsdPrice;
+      }
+
+      if (token0UsdPrice <= 0 && token1UsdPrice <= 0 && rawReserveUsd > 0 && reserve0 + reserve1 > 0) {
+        const averageUsdPerToken = rawReserveUsd / (reserve0 + reserve1);
+        token0UsdPrice = averageUsdPerToken;
+        token1UsdPrice = averageUsdPerToken;
+      } else {
+        if (token0UsdPrice <= 0 && rawReserveUsd > 0 && reserve0 > 0) {
+          token0UsdPrice = rawReserveUsd / (reserve0 + reserve1 || 1);
+        }
+        if (token1UsdPrice <= 0 && rawReserveUsd > 0 && reserve1 > 0) {
+          token1UsdPrice = rawReserveUsd / (reserve0 + reserve1 || 1);
+        }
+      }
+
+      token0UsdPrice = Math.max(0, token0UsdPrice);
+      token1UsdPrice = Math.max(0, token1UsdPrice);
+
+      const estimatedReserveUsd = (reserve0 * token0UsdPrice) + (reserve1 * token1UsdPrice);
+      const reserveUsd = rawReserveUsd > 0
+        ? rawReserveUsd
+        : Number.isFinite(estimatedReserveUsd)
+          ? Math.max(0, estimatedReserveUsd)
+          : 0;
+
+      let volumeUsd = rawVolumeUsd > 0 ? rawVolumeUsd : rawUntrackedVolumeUsd;
+      if (volumeUsd <= 0) {
+        const estimatedVolumes: number[] = [];
+        if (volumeToken0 > 0 && token0UsdPrice > 0) estimatedVolumes.push(volumeToken0 * token0UsdPrice);
+        if (volumeToken1 > 0 && token1UsdPrice > 0) estimatedVolumes.push(volumeToken1 * token1UsdPrice);
+        if (estimatedVolumes.length) {
+          volumeUsd = estimatedVolumes.reduce((sum, value) => sum + value, 0) / estimatedVolumes.length;
+        }
+      }
+
+      metrics[pair.id.toLowerCase()] = {
+        reserveUsd,
+        volumeUsd: Math.max(0, volumeUsd),
+        token0UsdPrice,
+        token1UsdPrice,
+      };
+    });
+
+    return metrics;
+  }, [reefUsdPrice, subgraphPairs, wrappedReefAddress]);
+  const getPairUsdMetrics = useCallback((pair: SubgraphPair): PairUsdMetrics => {
+    const fromMap = pairUsdMetricsById[pair.id.toLowerCase()];
+    if (fromMap) return fromMap;
+    return {
+      reserveUsd: Math.max(0, asNumber(pair.reserveUSD)),
+      volumeUsd: Math.max(0, asNumber(pair.volumeUSD)),
+      token0UsdPrice: 0,
+      token1UsdPrice: 0,
+    };
+  }, [pairUsdMetricsById]);
+  const poolStatsTotals = useMemo(() => {
+    const pairsVolumeFallback = subgraphPairs.reduce((sum, pair) => sum + getPairUsdMetrics(pair).volumeUsd, 0);
+    const pairsLiquidityFallback = subgraphPairs.reduce((sum, pair) => sum + getPairUsdMetrics(pair).reserveUsd, 0);
+    const factoryVolumeUsd = Math.max(0, asNumber(subgraphFactory?.totalVolumeUSD));
+    const factoryLiquidityUsd = Math.max(0, asNumber(subgraphFactory?.totalLiquidityUSD));
+
+    return {
+      totalVolumeUsd: factoryVolumeUsd > 0 ? factoryVolumeUsd : pairsVolumeFallback,
+      totalLiquidityUsd: factoryLiquidityUsd > 0 ? factoryLiquidityUsd : pairsLiquidityFallback,
+    };
+  }, [getPairUsdMetrics, subgraphFactory?.totalLiquidityUSD, subgraphFactory?.totalVolumeUSD, subgraphPairs]);
   const positionPairIdKey = useMemo(() => (
     subgraphPairs
       .filter((pair) => isAddress(pair.id))
@@ -2523,7 +2655,7 @@ const App = () => {
 
         const token0Amount = Math.max(0, asNumber(pair.reserve0) * lpShare);
         const token1Amount = Math.max(0, asNumber(pair.reserve1) * lpShare);
-        const usdValue = Math.max(0, asNumber(pair.reserveUSD) * lpShare);
+        const usdValue = Math.max(0, getPairUsdMetrics(pair).reserveUsd * lpShare);
 
         return {
           pairId: pair.id,
@@ -2541,7 +2673,7 @@ const App = () => {
       })
       .filter((item): item is UserPoolPosition => Boolean(item))
       .sort((a, b) => b.usdValue - a.usdValue)
-  ), [getPairTokenDisplaySymbol, isPairTokenReef, poolPositionBalances, subgraphPairs]);
+  ), [getPairTokenDisplaySymbol, getPairUsdMetrics, isPairTokenReef, poolPositionBalances, subgraphPairs]);
 
   const closeNewPositionModal = useCallback(() => {
     setIsNewPositionOpen(false);
@@ -3145,6 +3277,7 @@ const App = () => {
                 const token1Symbol = getPairTokenDisplaySymbol(pair.token1);
                 const token0IsReef = isPairTokenReef(pair.token0);
                 const token1IsReef = isPairTokenReef(pair.token1);
+                const pairUsdMetrics = getPairUsdMetrics(pair);
 
                 return (
                   <div
@@ -3177,7 +3310,7 @@ const App = () => {
                       </div>
                     </div>
                     <span className="text-sm font-medium text-right text-[#5d3bad]">0.3%</span>
-                    <span className="text-sm font-medium text-right text-[#1b1530]">{formatCompactUsd(pair.reserveUSD)}</span>
+                    <span className="text-sm font-medium text-right text-[#1b1530]">{formatCompactUsd(pairUsdMetrics.reserveUsd)}</span>
                     <div className="flex items-center gap-2 justify-end">
                       <button
                         type="button"
@@ -3289,8 +3422,8 @@ const App = () => {
             <div className="space-y-3">
               {[
                 { label: 'Active Pairs', value: formatTokenCount(subgraphFactory?.pairCount ?? subgraphPairs.length) },
-                { label: 'Total Volume', value: formatCompactUsd(subgraphFactory?.totalVolumeUSD) },
-                { label: 'Total Value Locked', value: formatCompactUsd(subgraphFactory?.totalLiquidityUSD) },
+                { label: 'Total Volume', value: formatCompactUsd(poolStatsTotals.totalVolumeUsd) },
+                { label: 'Total Value Locked', value: formatCompactUsd(poolStatsTotals.totalLiquidityUsd) },
                 { label: 'Indexed Tokens', value: formatTokenCount(subgraphTokens.length) },
               ].map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
@@ -3340,6 +3473,7 @@ const App = () => {
               const token1Symbol = getPairTokenDisplaySymbol(pool.token1);
               const token0IsReef = isPairTokenReef(pool.token0);
               const token1IsReef = isPairTokenReef(pool.token1);
+              const poolUsdMetrics = getPairUsdMetrics(pool);
 
               return (
                 <div
@@ -3361,8 +3495,8 @@ const App = () => {
                   <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">
                     {asNumber(pool.reserve0).toFixed(2)} / {asNumber(pool.reserve1).toFixed(2)}
                   </span>
-                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.reserveUSD)}</span>
-                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.volumeUSD)}</span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(poolUsdMetrics.reserveUsd)}</span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(poolUsdMetrics.volumeUsd)}</span>
                   <span className="text-center text-[0.95rem] font-semibold text-[#2fad73]">{formatTokenCount(pool.txCount)}</span>
 
                   <div className="flex items-center justify-end gap-2">

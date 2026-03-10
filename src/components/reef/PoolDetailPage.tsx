@@ -15,6 +15,7 @@ import {
 import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
 import { erc20Abi, reefswapRouterAbi } from '@/lib/abi';
 import { reefChain } from '@/lib/config';
+import { useReefPrice } from '@/hooks/useReefPrice';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 import { formatDisplayAmount, getErrorMessage, normalizeInput, shortAddress } from '@/lib/utils';
@@ -58,6 +59,7 @@ type PoolTransactionEntry = {
 
 const CHART_SAMPLE_SIZE = 1000;
 const SWAP_FEE_RATE = 0.003;
+const REEF_USD_FALLBACK = 0.000073;
 const MAX_APPROVAL = (2n ** 256n) - 1n;
 const TX_DEADLINE_SECONDS = 60 * 20;
 const AMOUNT_SLIDER_HELPERS = [
@@ -405,6 +407,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const publicClient = usePublicClient({ chainId: reefChain.id });
   const { data: walletClient } = useWalletClient();
   const { switchChainAsync, isPending: isSwitching } = useSwitchChain();
+  const { price: liveReefUsdPrice } = useReefPrice();
 
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
@@ -510,6 +513,85 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const reserveTotal = reserve0 + reserve1;
   const token0Weight = reserveTotal > 0 ? (reserve0 / reserveTotal) * 100 : 0;
   const token1Weight = reserveTotal > 0 ? (reserve1 / reserveTotal) * 100 : 0;
+  const reefUsdPrice = liveReefUsdPrice > 0 ? liveReefUsdPrice : REEF_USD_FALLBACK;
+  const rawReserveUsd = asNumber(pair?.reserveUSD);
+  const token0PriceInToken1 = asNumber(pair?.token0Price);
+  const token1PriceInToken0 = asNumber(pair?.token1Price);
+  const { token0UsdPrice, token1UsdPrice } = useMemo(() => {
+    let nextToken0Usd = 0;
+    let nextToken1Usd = 0;
+
+    if (token0IsCanonicalReef) {
+      nextToken0Usd = reefUsdPrice;
+      if (token1PriceInToken0 > 0) {
+        nextToken1Usd = token1PriceInToken0 * nextToken0Usd;
+      }
+    } else if (token1IsCanonicalReef) {
+      nextToken1Usd = reefUsdPrice;
+      if (token0PriceInToken1 > 0) {
+        nextToken0Usd = token0PriceInToken1 * nextToken1Usd;
+      }
+    }
+
+    if (nextToken0Usd <= 0 || nextToken1Usd <= 0) {
+      if (rawReserveUsd > 0 && reserve0 > 0 && reserve1 > 0) {
+        if (token0PriceInToken1 > 0) {
+          const token1UsdFromTotal = rawReserveUsd / ((reserve0 * token0PriceInToken1) + reserve1);
+          if (Number.isFinite(token1UsdFromTotal) && token1UsdFromTotal > 0) {
+            nextToken1Usd = token1UsdFromTotal;
+            nextToken0Usd = token0PriceInToken1 * token1UsdFromTotal;
+          }
+        } else if (token1PriceInToken0 > 0) {
+          const token0UsdFromTotal = rawReserveUsd / ((reserve1 * token1PriceInToken0) + reserve0);
+          if (Number.isFinite(token0UsdFromTotal) && token0UsdFromTotal > 0) {
+            nextToken0Usd = token0UsdFromTotal;
+            nextToken1Usd = token1PriceInToken0 * token0UsdFromTotal;
+          }
+        }
+      }
+    }
+
+    if (nextToken0Usd <= 0 && rawReserveUsd > 0 && reserve0 > 0) {
+      nextToken0Usd = rawReserveUsd / (reserve0 + reserve1 || 1);
+    }
+    if (nextToken1Usd <= 0 && rawReserveUsd > 0 && reserve1 > 0) {
+      nextToken1Usd = rawReserveUsd / (reserve0 + reserve1 || 1);
+    }
+
+    return {
+      token0UsdPrice: Math.max(0, nextToken0Usd),
+      token1UsdPrice: Math.max(0, nextToken1Usd),
+    };
+  }, [
+    rawReserveUsd,
+    reefUsdPrice,
+    reserve0,
+    reserve1,
+    token0IsCanonicalReef,
+    token0PriceInToken1,
+    token1IsCanonicalReef,
+    token1PriceInToken0,
+  ]);
+  const effectiveReserveUsd = useMemo(() => {
+    if (rawReserveUsd > 0) return rawReserveUsd;
+    const estimated = (reserve0 * token0UsdPrice) + (reserve1 * token1UsdPrice);
+    return Number.isFinite(estimated) ? Math.max(0, estimated) : 0;
+  }, [rawReserveUsd, reserve0, reserve1, token0UsdPrice, token1UsdPrice]);
+  const estimateSwapUsd = useCallback((swap: SubgraphSwap): number => {
+    const rawUsd = Math.max(0, asNumber(swap.amountUSD));
+    if (rawUsd > 0) return rawUsd;
+    const token0Delta = Math.max(Math.abs(asNumber(swap.amount0In)), Math.abs(asNumber(swap.amount0Out)));
+    const token1Delta = Math.max(Math.abs(asNumber(swap.amount1In)), Math.abs(asNumber(swap.amount1Out)));
+    return Math.max(token0Delta * token0UsdPrice, token1Delta * token1UsdPrice, 0);
+  }, [token0UsdPrice, token1UsdPrice]);
+  const estimateLiquidityEventUsd = useCallback((amountUsd: string | null, amount0: string | null, amount1: string | null): number => {
+    const rawUsd = Math.max(0, asNumber(amountUsd));
+    if (rawUsd > 0) return rawUsd;
+    return Math.max(
+      0,
+      (Math.abs(asNumber(amount0)) * token0UsdPrice) + (Math.abs(asNumber(amount1)) * token1UsdPrice),
+    );
+  }, [token0UsdPrice, token1UsdPrice]);
   const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
   const volume24hUsd = useMemo(() => {
     const swaps = pairTransactions?.swaps || [];
@@ -518,9 +600,25 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     return swaps.reduce((sum, swap) => {
       const timestamp = asTimestamp(swap.timestamp);
       if (timestamp < cutoff) return sum;
-      return sum + Math.max(0, asNumber(swap.amountUSD));
+      return sum + estimateSwapUsd(swap);
     }, 0);
-  }, [pairTransactions?.swaps]);
+  }, [estimateSwapUsd, pairTransactions?.swaps]);
+  const previous24hVolumeUsd = useMemo(() => {
+    const swaps = pairTransactions?.swaps || [];
+    if (!swaps.length) return 0;
+    const now = Math.floor(Date.now() / 1000);
+    const previousStart = now - (2 * 86_400);
+    const previousEnd = now - 86_400;
+    return swaps.reduce((sum, swap) => {
+      const timestamp = asTimestamp(swap.timestamp);
+      if (timestamp < previousStart || timestamp >= previousEnd) return sum;
+      return sum + estimateSwapUsd(swap);
+    }, 0);
+  }, [estimateSwapUsd, pairTransactions?.swaps]);
+  const volume24hChange = useMemo(() => {
+    if (previous24hVolumeUsd <= 0) return 0;
+    return ((volume24hUsd - previous24hVolumeUsd) / previous24hVolumeUsd) * 100;
+  }, [previous24hVolumeUsd, volume24hUsd]);
   const explorerTxBaseUrl = useMemo(() => {
     const explorerUrl = reefChain.blockExplorers?.default?.url || 'https://reefscan.com';
     return explorerUrl.replace(/\/$/, '');
@@ -586,7 +684,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     if (lpTokenBalance <= 0n || lpTotalSupply <= 0n) return 0;
     return Number((lpTokenBalance * 1_000_000n) / lpTotalSupply) / 1_000_000;
   }, [lpTokenBalance, lpTotalSupply]);
-  const myLiquidityUsd = asNumber(pair?.reserveUSD) * myLiquidityShare;
+  const myLiquidityUsd = effectiveReserveUsd * myLiquidityShare;
   const myToken0Liquidity = reserve0 * myLiquidityShare;
   const myToken1Liquidity = reserve1 * myLiquidityShare;
   const estimatedPoolFees24hUsd = volume24hUsd * SWAP_FEE_RATE;
@@ -596,7 +694,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     {
       symbol: token0Symbol,
       percent: token0Weight.toFixed(2),
-      usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve0, 1) : 0),
+      usdPrice: formatUsd(token0UsdPrice),
       ratio: `1 ${token0Symbol} = ${formatRate(pair?.token0Price)} ${token1Symbol}`,
       totalLiquidity: formatTokenAmount(reserve0),
       myLiquidity: `${formatTokenAmount(myToken0Liquidity)} ${token0Symbol}`,
@@ -605,7 +703,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     {
       symbol: token1Symbol,
       percent: token1Weight.toFixed(2),
-      usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve1, 1) : 0),
+      usdPrice: formatUsd(token1UsdPrice),
       ratio: `1 ${token1Symbol} = ${formatRate(pair?.token1Price)} ${token0Symbol}`,
       totalLiquidity: formatTokenAmount(reserve1),
       myLiquidity: `${formatTokenAmount(myToken1Liquidity)} ${token1Symbol}`,
@@ -714,12 +812,10 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     ? tradeToken0.symbol
     : tradeToken1.symbol;
   const stakeTotalUsd = useMemo(() => {
-    const usdPerToken0 = reserve0 > 0 ? asNumber(pair?.reserveUSD) / reserve0 : 0;
-    const usdPerToken1 = reserve1 > 0 ? asNumber(pair?.reserveUSD) / reserve1 : 0;
     const amount0 = asNumber(formatUnits(stakeAmountToken0Raw, tradeToken0.decimals));
     const amount1 = asNumber(formatUnits(stakeAmountToken1Raw, tradeToken1.decimals));
-    return Math.max(0, (amount0 * usdPerToken0) + (amount1 * usdPerToken1));
-  }, [pair?.reserveUSD, reserve0, reserve1, stakeAmountToken0Raw, stakeAmountToken1Raw, tradeToken0.decimals, tradeToken1.decimals]);
+    return Math.max(0, (amount0 * token0UsdPrice) + (amount1 * token1UsdPrice));
+  }, [stakeAmountToken0Raw, stakeAmountToken1Raw, token0UsdPrice, token1UsdPrice, tradeToken0.decimals, tradeToken1.decimals]);
   const canStake = actionTab === 'stake' &&
     isConnected &&
     !isWrongChain &&
@@ -758,12 +854,10 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const unstakeAmountToken0 = formatDisplayAmount(unstakeAmountToken0Raw, tradeToken0.decimals, 6);
   const unstakeAmountToken1 = formatDisplayAmount(unstakeAmountToken1Raw, tradeToken1.decimals, 6);
   const unstakeValueUsd = useMemo(() => {
-    const usdPerToken0 = reserve0 > 0 ? asNumber(pair?.reserveUSD) / reserve0 : 0;
-    const usdPerToken1 = reserve1 > 0 ? asNumber(pair?.reserveUSD) / reserve1 : 0;
     const amount0 = asNumber(formatUnits(unstakeAmountToken0Raw, tradeToken0.decimals));
     const amount1 = asNumber(formatUnits(unstakeAmountToken1Raw, tradeToken1.decimals));
-    return Math.max(0, (amount0 * usdPerToken0) + (amount1 * usdPerToken1));
-  }, [pair?.reserveUSD, reserve0, reserve1, tradeToken0.decimals, tradeToken1.decimals, unstakeAmountToken0Raw, unstakeAmountToken1Raw]);
+    return Math.max(0, (amount0 * token0UsdPrice) + (amount1 * token1UsdPrice));
+  }, [token0UsdPrice, token1UsdPrice, tradeToken0.decimals, tradeToken1.decimals, unstakeAmountToken0Raw, unstakeAmountToken1Raw]);
   const hasUnstakeInsufficientBalance = unstakeLiquidityRaw > lpTokenBalance;
   const unstakeRequiresApproval = unstakeLiquidityRaw > 0n && lpTokenAllowance < unstakeLiquidityRaw;
   const canUnstake = actionTab === 'unstake' &&
@@ -1217,11 +1311,11 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const chartPoints = useMemo<ChartPoint[]>(() => {
     if (!pair) return [];
 
-    const reserveUsd = asNumber(pair.reserveUSD);
+    const reserveUsd = effectiveReserveUsd;
     const swaps = (pairTransactions?.swaps || [])
       .map((swap) => ({
         timestamp: asTimestamp(swap.timestamp),
-        amountUsd: asNumber(swap.amountUSD),
+        amountUsd: estimateSwapUsd(swap),
         price: deriveSwapPrice(swap),
       }))
       .filter((swap) => swap.timestamp > 0)
@@ -1230,7 +1324,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     const mints = (pairTransactions?.mints || [])
       .map((mint) => ({
         timestamp: asTimestamp(mint.timestamp),
-        amountUsd: Math.abs(asNumber(mint.amountUSD)),
+        amountUsd: estimateLiquidityEventUsd(mint.amountUSD, mint.amount0, mint.amount1),
       }))
       .filter((mint) => mint.timestamp > 0)
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -1238,7 +1332,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     const burns = (pairTransactions?.burns || [])
       .map((burn) => ({
         timestamp: asTimestamp(burn.timestamp),
-        amountUsd: Math.abs(asNumber(burn.amountUSD)),
+        amountUsd: estimateLiquidityEventUsd(burn.amountUSD, burn.amount0, burn.amount1),
       }))
       .filter((burn) => burn.timestamp > 0)
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -1313,7 +1407,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
       { time: now - TIMEFRAME_BUCKET_SECONDS[timeframe], value: 0 },
       { time: now, value: 0 },
     ];
-  }, [pair, pairTransactions, chartTab, timeframe]);
+  }, [chartTab, effectiveReserveUsd, estimateLiquidityEventUsd, estimateSwapUsd, pair, pairTransactions, timeframe]);
 
   const latestChartPoint = chartPoints[chartPoints.length - 1];
   const latestChartValue = latestChartPoint?.value ?? 0;
@@ -1432,7 +1526,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
             <div className="pool-stats__main-stats">
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">Total Value Locked</div>
-                <div className="pool-stats__main-stat-value">{formatUsd(pair?.reserveUSD)}</div>
+                <div className="pool-stats__main-stat-value">{formatUsd(effectiveReserveUsd)}</div>
               </div>
 
               <div className="pool-stats__main-stat">
@@ -1444,7 +1538,11 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
                 <div className="pool-stats__main-stat-label">24h Volume</div>
                 <div className="pool-stats__main-stat-value">
                   <span>{formatUsd(volume24hUsd)}</span>
-                  {totalTransactions > 0 ? <Uik.Trend type="good" direction="up" text={`+${totalTransactions} tx`} /> : null}
+                  <Uik.Trend
+                    type={volume24hChange >= 0 ? 'good' : 'bad'}
+                    direction={volume24hChange >= 0 ? 'up' : 'down'}
+                    text={`${volume24hChange >= 0 ? '+' : ''}${volume24hChange.toFixed(2)}%`}
+                  />
                 </div>
               </div>
             </div>
