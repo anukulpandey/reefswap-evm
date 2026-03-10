@@ -7,4 +7,7 @@ export interface Token {
   priceChange: number;
   balance: number;
   usdValue: number;
+  address?: `0x${string}` | null;
+  decimals?: number;
+  isNative?: boolean;
 }

@@ -64,7 +64,7 @@ const ActivityPanel = () => {
                     </div>
                     <div>
                       <p className="text-base font-semibold text-[#1b1530]">
-                        {tx.type === 'sent' ? 'Sent REEF' : 'Received REEF'}
+                        {tx.type === 'sent' ? `Sent ${tx.symbol}` : `Received ${tx.symbol}`}
                       </p>
                       <p className="text-sm font-medium text-[#8e899c]">
                         {tx.date} · {tx.time}
@@ -76,7 +76,15 @@ const ActivityPanel = () => {
                     <span className="text-base font-semibold text-[#a8a4b3]">
                       {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
                     </span>
-                    {showBalances && <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />}
+                    {showBalances && (
+                      tx.symbol === 'REEF' ? (
+                        <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
+                      ) : (
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">
+                          {tx.symbol.slice(0, 1)}
+                        </span>
+                      )
+                    )}
                   </div>
                 </div>
               </a>

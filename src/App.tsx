@@ -148,7 +148,7 @@ const addEthereumChainParams = {
   blockExplorerUrls: [reefChain.blockExplorers.default.url],
 };
 
-const TokensView = ({ onSwap }: { onSwap?: () => void }) => {
+const TokensView = ({ onSwap, tokens }: { onSwap?: () => void; tokens: TokenOption[] }) => {
   const { address } = useAccount();
   const { balance: reefBalance, isLoading: isBalanceLoading } = useReefBalance(address);
   const { price: reefPrice } = useReefPrice();
@@ -166,7 +166,7 @@ const TokensView = ({ onSwap }: { onSwap?: () => void }) => {
       </section>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <AssetTabs onSwap={onSwap} />
+          <AssetTabs onSwap={onSwap} tokenOptions={tokens} />
         </div>
         <div className="lg:col-span-1">
           <ActivityPanel />
@@ -1124,7 +1124,7 @@ const App = () => {
     </div>
   );
 
-  const tokensRouteView = <TokensView onSwap={() => navigateRoute('swap')} />;
+  const tokensRouteView = <TokensView onSwap={() => navigateRoute('swap')} tokens={tokens} />;
 
   const swapRouteView = (
     <>

@@ -1,15 +1,14 @@
- import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
- import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Sparkles } from 'lucide-react';
- import TokenList from './TokenList';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import TokenList from './TokenList';
 import SqwidButton from './SqwidBtn';
- 
+import { type TokenOption } from '@/lib/tokens';
+
 interface AssetTabsProps {
   onSwap?: () => void;
+  tokenOptions: TokenOption[];
 }
 
-const AssetTabs = ({ onSwap }: AssetTabsProps) => {
+const AssetTabs = ({ onSwap, tokenOptions }: AssetTabsProps) => {
   return (
     <Tabs defaultValue="tokens" className="w-full pl-6">
       <TabsList className="bg-transparent border-b border-border rounded-none w-full justify-start gap-4 h-auto p-0 mb-4">
@@ -28,7 +27,7 @@ const AssetTabs = ({ onSwap }: AssetTabsProps) => {
       </TabsList>
 
       <TabsContent value="tokens">
-        <TokenList onSwap={onSwap} />
+        <TokenList onSwap={onSwap} tokenOptions={tokenOptions} />
       </TabsContent>
  
       <TabsContent value="nfts" className="pt-6">
@@ -39,8 +38,8 @@ const AssetTabs = ({ onSwap }: AssetTabsProps) => {
           <SqwidButton />
         </div>
       </TabsContent>
-     </Tabs>
-   );
- };
- 
- export default AssetTabs;
+    </Tabs>
+  );
+};
+
+export default AssetTabs;

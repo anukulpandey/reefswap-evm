@@ -3,10 +3,11 @@ import { Button } from '@/components/ui/button';
 import { useState, useEffect } from 'react';
 import { type Token } from '@/lib/mockData';
 import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
-import { useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
-import { parseEther, isAddress } from 'viem';
+import { useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
+import { isAddress, parseUnits } from 'viem';
 import { Loader2, ArrowUpRight } from 'lucide-react';
 import UiKit from '@reef-chain/ui-kit';
+import { erc20Abi } from '@/lib/abi';
 
 interface SendModalProps {
   isOpen: boolean;
@@ -17,36 +18,48 @@ interface SendModalProps {
 const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
+  const [submittedHash, setSubmittedHash] = useState<`0x${string}` | undefined>(undefined);
   const { showBalances } = useBalanceVisibility();
 
   const {
-    sendTransaction,
-    data: txHash,
-    isPending: isSending,
-    reset,
-    error: sendError,
+    sendTransactionAsync,
+    isPending: isSendingNative,
+    reset: resetNativeSend,
+    error: nativeSendError,
   } = useSendTransaction();
+
+  const {
+    writeContractAsync,
+    isPending: isSendingToken,
+    reset: resetTokenSend,
+    error: tokenSendError,
+  } = useWriteContract();
 
   const {
     isLoading: isConfirming,
     isSuccess: isConfirmed,
     error: confirmError,
-  } = useWaitForTransactionReceipt({ hash: txHash });
+  } = useWaitForTransactionReceipt({ hash: submittedHash });
+
+  const isSending = isSendingNative || isSendingToken;
+  const isProcessing = isSending || isConfirming;
 
   useEffect(() => {
-    if (isConfirmed && txHash) {
+    if (isConfirmed && submittedHash) {
       UiKit.notify.success({
-        message: `Transaction Confirmed\nSent ${amount} ${token?.symbol}. Tx: ${txHash.slice(0, 10)}...`,
+        message: `Transaction Confirmed\nSent ${amount} ${token?.symbol}. Tx: ${submittedHash.slice(0, 10)}...`,
       });
       setRecipient('');
       setAmount('');
-      reset();
+      setSubmittedHash(undefined);
+      resetNativeSend();
+      resetTokenSend();
       onClose();
     }
-  }, [isConfirmed]);
+  }, [amount, isConfirmed, onClose, resetNativeSend, resetTokenSend, submittedHash, token?.symbol]);
 
   useEffect(() => {
-    const error = sendError || confirmError;
+    const error = nativeSendError || tokenSendError || confirmError;
     if (error) {
       const msg = error.message?.includes('User rejected')
         ? 'Transaction rejected by user'
@@ -54,24 +67,52 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
       UiKit.notify.danger({
         message: `Transaction Failed\n${msg}`,
       });
-      reset();
+      setSubmittedHash(undefined);
+      resetNativeSend();
+      resetTokenSend();
     }
-  }, [sendError, confirmError]);
+  }, [confirmError, nativeSendError, resetNativeSend, resetTokenSend, tokenSendError]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!token || hasErrors || !recipient || !amount) return;
 
-    sendTransaction({
-      to: recipient as `0x${string}`,
-      value: parseEther(amount),
-    });
+    try {
+      const decimals = token.decimals ?? 18;
+      const value = parseUnits(amount, decimals);
+
+      if (token.isNative) {
+        const hash = await sendTransactionAsync({
+          to: recipient as `0x${string}`,
+          value,
+        });
+        setSubmittedHash(hash);
+        return;
+      }
+
+      if (!token.address) {
+        UiKit.notify.danger({ message: 'Token address is missing for this asset.' });
+        return;
+      }
+
+      const hash = await writeContractAsync({
+        address: token.address,
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [recipient as `0x${string}`, value],
+      });
+      setSubmittedHash(hash);
+    } catch {
+      // handled by hook error state effect
+    }
   };
 
   const handleClose = () => {
-    if (!isSending && !isConfirming) {
+    if (!isProcessing) {
       setRecipient('');
       setAmount('');
-      reset();
+      setSubmittedHash(undefined);
+      resetNativeSend();
+      resetTokenSend();
       onClose();
     }
   };
@@ -82,10 +123,8 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
 
   if (!token) return null;
 
-  const isProcessing = isSending || isConfirming;
-
   const formatBalance = (val: number) =>
-    new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val);
+    new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 }).format(val);
 
   const numAmount = parseFloat(amount);
   const amountExceedsBalance = amount !== '' && numAmount > token.balance;

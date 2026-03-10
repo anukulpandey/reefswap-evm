@@ -3,38 +3,135 @@ import { Card } from '@/components/ui/card';
 import { FaPaperPlane } from 'react-icons/fa';
 import { faArrowsRotate } from '@fortawesome/free-solid-svg-icons';
 import { type Token } from '@/lib/mockData';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import UiKit from '@reef-chain/ui-kit';
 import SendModal from './SendModal';
 import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
-import { useAccount } from 'wagmi';
+import { useAccount, usePublicClient } from 'wagmi';
 import { useReefBalance } from '@/hooks/useReefBalance';
 import { useReefPrice } from '@/hooks/useReefPrice';
+import { formatUnits } from 'viem';
+import { erc20Abi } from '@/lib/abi';
+import { reefChain } from '@/lib/config';
+import { tokenKey, type TokenOption } from '@/lib/tokens';
 
 interface TokenListProps {
   onSwap?: () => void;
+  tokenOptions: TokenOption[];
 }
 
-const TokenList = ({ onSwap }: TokenListProps) => {
+const toFinite = (value: string): number => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
+  const [balancesByTokenKey, setBalancesByTokenKey] = useState<Record<string, number>>({});
+  const [isTokenBalancesLoading, setIsTokenBalancesLoading] = useState(false);
   const { showBalances } = useBalanceVisibility();
   const { address } = useAccount();
+  const publicClient = usePublicClient({ chainId: reefChain.id });
   const { balance: reefBalance, isLoading: isBalanceLoading } = useReefBalance(address);
   const { price: reefPrice, change24h } = useReefPrice();
 
-  const tokens: Token[] = [
-    {
-      id: '1',
-      name: 'Reef',
-      symbol: 'REEF',
-      icon: 'reef',
-      price: reefPrice,
-      priceChange: change24h,
-      balance: reefBalance,
-      usdValue: reefBalance * reefPrice,
-    },
-  ];
+  const portfolioTokenOptions = useMemo(() => {
+    const unique = new Map<string, TokenOption>();
+    tokenOptions.forEach((token) => {
+      unique.set(tokenKey(token), token);
+    });
+    return Array.from(unique.values()).slice(0, 60);
+  }, [tokenOptions]);
+
+  useEffect(() => {
+    if (!address || !publicClient) {
+      setBalancesByTokenKey({});
+      setIsTokenBalancesLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchBalances = async () => {
+      setIsTokenBalancesLoading(true);
+      try {
+        const nativeRaw = await publicClient.getBalance({ address });
+        const nativeBalance = toFinite(formatUnits(nativeRaw, 18));
+
+        const entries = await Promise.all(
+          portfolioTokenOptions.map(async (token) => {
+            if (token.isNative) return [tokenKey(token), nativeBalance] as const;
+            if (!token.address) return [tokenKey(token), 0] as const;
+
+            try {
+              const raw = await publicClient.readContract({
+                address: token.address,
+                abi: erc20Abi,
+                functionName: 'balanceOf',
+                args: [address],
+              });
+              return [tokenKey(token), toFinite(formatUnits(raw, token.decimals))] as const;
+            } catch {
+              return [tokenKey(token), 0] as const;
+            }
+          }),
+        );
+
+        if (cancelled) return;
+        setBalancesByTokenKey(Object.fromEntries(entries));
+      } catch {
+        if (!cancelled) {
+          setBalancesByTokenKey({});
+        }
+      } finally {
+        if (!cancelled) {
+          setIsTokenBalancesLoading(false);
+        }
+      }
+    };
+
+    fetchBalances();
+    const interval = setInterval(fetchBalances, 20_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [address, portfolioTokenOptions, publicClient]);
+
+  const tokens: Token[] = useMemo(
+    () =>
+      portfolioTokenOptions.map((token) => {
+        const key = tokenKey(token);
+        const chainBalance = balancesByTokenKey[key];
+        const balance = token.isNative ? reefBalance : (chainBalance ?? 0);
+        const isReefLike = token.symbol === 'REEF' || token.symbol === 'WREEF';
+        const price = isReefLike ? reefPrice : 0;
+
+        return {
+          id: key,
+          name: token.name,
+          symbol: token.symbol,
+          icon: token.symbol === 'REEF' ? 'reef' : token.symbol.charAt(0),
+          price,
+          priceChange: isReefLike ? change24h : 0,
+          balance,
+          usdValue: balance * price,
+          address: token.address,
+          decimals: token.decimals,
+          isNative: token.isNative,
+        } satisfies Token;
+      }),
+    [balancesByTokenKey, change24h, portfolioTokenOptions, reefBalance, reefPrice],
+  );
+
+  const visibleTokens = useMemo(() => {
+    const sorted = [...tokens].sort((a, b) => (b.usdValue - a.usdValue) || (b.balance - a.balance) || a.symbol.localeCompare(b.symbol));
+    const withBalance = sorted.filter((token) => token.balance > 0);
+    if (withBalance.length > 0) return withBalance;
+    return sorted.slice(0, 12);
+  }, [tokens]);
 
   const handleSend = (token: Token) => {
     setSelectedToken(token);
@@ -45,6 +142,13 @@ const TokenList = ({ onSwap }: TokenListProps) => {
     new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
+    }).format(value)
+  );
+
+  const formatTokenBalance = (value: number) => (
+    new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6,
     }).format(value)
   );
 
@@ -61,7 +165,7 @@ const TokenList = ({ onSwap }: TokenListProps) => {
     <>
       <Card className="bg-transparent rounded-2xl shadow-none border-0 overflow-hidden">
         <div className="space-y-2">
-          {tokens.map((token) => (
+          {visibleTokens.map((token) => (
             <div
               key={token.id}
               className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]"
@@ -84,7 +188,7 @@ const TokenList = ({ onSwap }: TokenListProps) => {
 
               <div className="flex items-center gap-5">
                 <div className="text-right">
-                  {isBalanceLoading && token.symbol === 'REEF' ? (
+                  {(isBalanceLoading || isTokenBalancesLoading) && balancesByTokenKey[token.id] === undefined ? (
                     <div className="flex items-center gap-1 justify-end">
                       {[0, 1, 2, 3].map((i) => (
                         <div
@@ -100,7 +204,7 @@ const TokenList = ({ onSwap }: TokenListProps) => {
                         {showBalances ? `$${formatNumber(token.usdValue)}` : '••••••'}
                       </p>
                       <p className="text-sm font-medium text-[#1b1530]">
-                        {showBalances ? `${formatNumber(token.balance)} ${token.symbol}` : '••••••'}
+                        {showBalances ? `${formatTokenBalance(token.balance)} ${token.symbol}` : '••••••'}
                       </p>
                     </>
                   )}
@@ -128,6 +232,11 @@ const TokenList = ({ onSwap }: TokenListProps) => {
               </div>
             </div>
           ))}
+          {visibleTokens.length === 0 ? (
+            <div className="rounded-2xl bg-white px-4 py-6 text-sm text-[#8e899c] shadow-sm border border-[#ebe6f4] w-[92%]">
+              No tokens available for this wallet yet.
+            </div>
+          ) : null}
         </div>
       </Card>
 
