@@ -403,20 +403,22 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
     isError: hasChartError,
   } = useSubgraphPairTransactions(pair?.id, CHART_SAMPLE_SIZE);
 
-  const token0Symbol = pair?.token0.symbol || 'REEF';
-  const token1Symbol = pair?.token1.symbol || 'TOKEN';
   const token0Address = pair?.token0.id || null;
   const token1Address = pair?.token1.id || null;
+  const token0IsCanonicalReef = sameAddress(token0Address, contracts.wrappedReef);
+  const token1IsCanonicalReef = sameAddress(token1Address, contracts.wrappedReef);
+  const token0SymbolRaw = pair?.token0.symbol || 'REEF';
+  const token1SymbolRaw = pair?.token1.symbol || 'TOKEN';
+  const token0Symbol = token0IsCanonicalReef ? 'REEF' : token0SymbolRaw;
+  const token1Symbol = token1IsCanonicalReef ? 'REEF' : token1SymbolRaw;
   const token0Decimals = Number.parseInt(pair?.token0.decimals || '18', 10);
   const token1Decimals = Number.parseInt(pair?.token1.decimals || '18', 10);
   const token0SafeDecimals = Number.isInteger(token0Decimals) ? token0Decimals : 18;
   const token1SafeDecimals = Number.isInteger(token1Decimals) ? token1Decimals : 18;
   const token0NormalizedAddress = token0Address && isAddress(token0Address) ? getAddress(token0Address) : null;
   const token1NormalizedAddress = token1Address && isAddress(token1Address) ? getAddress(token1Address) : null;
-  const token0IsCanonicalReef = sameAddress(token0Address, contracts.wrappedReef);
-  const token1IsCanonicalReef = sameAddress(token1Address, contracts.wrappedReef);
-  const token0Icon = resolveTokenIconUrl({ address: token0Address, symbol: token0Symbol, iconUrl: null });
-  const token1Icon = resolveTokenIconUrl({ address: token1Address, symbol: token1Symbol, iconUrl: null });
+  const token0Icon = resolveTokenIconUrl({ address: token0Address, symbol: token0SymbolRaw, iconUrl: null });
+  const token1Icon = resolveTokenIconUrl({ address: token1Address, symbol: token1SymbolRaw, iconUrl: null });
   const tradeToken0: TradeToken = {
     symbol: token0Symbol,
     decimals: token0SafeDecimals,
@@ -918,16 +920,28 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
             <div className="pool-stats__toolbar">
               <div className="pool-stats__pool-select">
                 <div className="pool-stats__pool-select-pair">
-                  <img
-                    src={token0Icon}
-                    alt={token0Symbol}
-                    className={`pool-stats__pool-select-pair--${Uik.utils.slug(token0Symbol)}`}
-                  />
-                  <img
-                    src={token1Icon}
-                    alt={token1Symbol}
-                    className={`pool-stats__pool-select-pair--${Uik.utils.slug(token1Symbol)}`}
-                  />
+                  {token0IsCanonicalReef ? (
+                    <div className={`pool-stats__pool-select-pair--${Uik.utils.slug(token0Symbol)}`}>
+                      <Uik.ReefIcon className="h-full w-full text-white" />
+                    </div>
+                  ) : (
+                    <img
+                      src={token0Icon}
+                      alt={token0Symbol}
+                      className={`pool-stats__pool-select-pair--${Uik.utils.slug(token0Symbol)}`}
+                    />
+                  )}
+                  {token1IsCanonicalReef ? (
+                    <div className={`pool-stats__pool-select-pair--${Uik.utils.slug(token1Symbol)}`}>
+                      <Uik.ReefIcon className="h-full w-full text-white" />
+                    </div>
+                  ) : (
+                    <img
+                      src={token1Icon}
+                      alt={token1Symbol}
+                      className={`pool-stats__pool-select-pair--${Uik.utils.slug(token1Symbol)}`}
+                    />
+                  )}
                 </div>
                 <span className="pool-stats__pool-select-name">{token0Symbol} / {token1Symbol}</span>
               </div>
@@ -967,11 +981,17 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
               <article key={token.symbol} className="pool-stats__token">
                 <div className="pool-stats__token-info">
                   <div className="pool-stats__token-main">
-                    <img
-                      src={token.symbol === token0Symbol ? token0Icon : token1Icon}
-                      alt={token.symbol}
-                      className={`pool-stats__token-image pool-stats__token-image--${Uik.utils.slug(token.symbol)}`}
-                    />
+                    {((token.symbol === token0Symbol) ? token0IsCanonicalReef : token1IsCanonicalReef) ? (
+                      <div className={`pool-stats__token-image pool-stats__token-image--${Uik.utils.slug(token.symbol)} pool-stats__token-image--reef`}>
+                        <Uik.ReefIcon className="h-full w-full text-white" />
+                      </div>
+                    ) : (
+                      <img
+                        src={token.symbol === token0Symbol ? token0Icon : token1Icon}
+                        alt={token.symbol}
+                        className={`pool-stats__token-image pool-stats__token-image--${Uik.utils.slug(token.symbol)}`}
+                      />
+                    )}
                     <div>
                       <div className="pool-stats__token-name">{token.symbol}</div>
                       <div className="pool-stats__token-percentage">{token.percent}%</div>

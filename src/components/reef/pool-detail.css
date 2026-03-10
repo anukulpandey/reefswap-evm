@@ -103,14 +103,19 @@
   margin-left: 10px;
 }
 
-.pool-stats__pool-select-pair img {
+.pool-stats__pool-select-pair > img,
+.pool-stats__pool-select-pair > div {
   width: 24px;
   height: 24px;
   border-radius: 50%;
   object-fit: cover;
+  overflow: hidden;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
 }
 
-.pool-stats__pool-select-pair img + img {
+.pool-stats__pool-select-pair > * + * {
   margin-left: -5px;
   z-index: 1;
 }
@@ -219,6 +224,13 @@
   height: 44px;
   border-radius: 50%;
   object-fit: cover;
+}
+
+.pool-stats__token-image--reef {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
 }
 
 .pool-stats__token-image:hover {

@@ -106,14 +106,23 @@ const resolveRouteFromLocation = (location: Pick<Location, 'pathname' | 'hash'>)
 const resolvePoolIdFromRef = (poolRef: string | null | undefined, pairs: SubgraphPair[]): string | null => {
   if (!poolRef) return null;
   const normalizedRef = poolRef.toLowerCase();
+  const normalizedDisplayRef = normalizedRef.replace(/wreef/g, 'reef');
 
   const byId = pairs.find((pair) => pair.id.toLowerCase() === normalizedRef);
   if (byId) return byId.id;
 
-  const bySymbolSlug = pairs.find((pair) => `${pair.token0.symbol}-${pair.token1.symbol}`.toLowerCase() === normalizedRef);
+  const bySymbolSlug = pairs.find((pair) => {
+    const rawSlug = `${pair.token0.symbol}-${pair.token1.symbol}`.toLowerCase();
+    const displaySlug = rawSlug.replace(/wreef/g, 'reef');
+    return rawSlug === normalizedRef || displaySlug === normalizedDisplayRef;
+  });
   if (bySymbolSlug) return bySymbolSlug.id;
 
-  const byReverseSymbolSlug = pairs.find((pair) => `${pair.token1.symbol}-${pair.token0.symbol}`.toLowerCase() === normalizedRef);
+  const byReverseSymbolSlug = pairs.find((pair) => {
+    const rawSlug = `${pair.token1.symbol}-${pair.token0.symbol}`.toLowerCase();
+    const displaySlug = rawSlug.replace(/wreef/g, 'reef');
+    return rawSlug === normalizedRef || displaySlug === normalizedDisplayRef;
+  });
   if (byReverseSymbolSlug) return byReverseSymbolSlug.id;
 
   return null;
@@ -1883,6 +1892,12 @@ const App = () => {
     () => subgraphPairs.find((pair) => pair.id.toLowerCase() === (selectedPoolId || '').toLowerCase()) || subgraphPairs[0] || null,
     [selectedPoolId, subgraphPairs],
   );
+  const getPairTokenDisplaySymbol = useCallback((token: { id: string; symbol: string }): string => (
+    sameAddress(token.id, wrappedReefAddress) ? 'REEF' : token.symbol
+  ), [wrappedReefAddress]);
+  const isPairTokenReef = useCallback((token: { id: string; symbol: string }): boolean => (
+    sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF'
+  ), [wrappedReefAddress]);
 
   const poolsRouteView = (
     <div className="max-w-7xl mx-auto px-6 py-8">
@@ -1920,63 +1935,70 @@ const App = () => {
             ) : !subgraphPairs.length ? (
               <div className="px-6 py-8 text-center text-sm text-[#8e899c]">No indexed pairs found yet.</div>
             ) : (
-              subgraphPairs.map((pair) => (
-                <div
-                  key={pair.id}
-                  className="px-6 py-4 grid grid-cols-5 items-center hover:bg-[#f8f5ff] transition-colors cursor-pointer"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    navigateRoute('pool-detail', { poolId: pair.id });
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
+              subgraphPairs.map((pair) => {
+                const token0Symbol = getPairTokenDisplaySymbol(pair.token0);
+                const token1Symbol = getPairTokenDisplaySymbol(pair.token1);
+                const token0IsReef = isPairTokenReef(pair.token0);
+                const token1IsReef = isPairTokenReef(pair.token1);
+
+                return (
+                  <div
+                    key={pair.id}
+                    className="px-6 py-4 grid grid-cols-5 items-center hover:bg-[#f8f5ff] transition-colors cursor-pointer"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
                       navigateRoute('pool-detail', { poolId: pair.id });
-                    }
-                  }}
-                >
-                  <div className="col-span-2 flex items-center gap-3">
-                    <div className="flex -space-x-2">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm text-white text-sm font-semibold">
-                        {pair.token0.symbol === 'REEF' ? <Uik.ReefIcon className="h-5 w-5 text-white" /> : pair.token0.symbol.slice(0, 1)}
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        navigateRoute('pool-detail', { poolId: pair.id });
+                      }
+                    }}
+                  >
+                    <div className="col-span-2 flex items-center gap-3">
+                      <div className="flex -space-x-2">
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm text-white text-sm font-semibold">
+                          {token0IsReef ? <Uik.ReefIcon className="h-5 w-5 text-white" /> : token0Symbol.slice(0, 1)}
+                        </div>
+                        <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm text-[#7a3bbd] text-sm font-semibold">
+                          {token1IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5 text-[#7a3bbd]" /> : token1Symbol.slice(0, 1)}
+                        </div>
                       </div>
-                      <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm text-[#7a3bbd] text-sm font-semibold">
-                        {pair.token1.symbol.slice(0, 1)}
+                      <div>
+                        <p className="text-sm font-semibold text-[#1b1530]">{token0Symbol} / {token1Symbol}</p>
+                        <p className="text-xs text-[#8e899c]">{shortAddress(pair.id)}</p>
                       </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-semibold text-[#1b1530]">{pair.token0.symbol} / {pair.token1.symbol}</p>
-                      <p className="text-xs text-[#8e899c]">{shortAddress(pair.id)}</p>
+                    <span className="text-sm font-medium text-right text-[#5d3bad]">0.3%</span>
+                    <span className="text-sm font-medium text-right text-[#1b1530]">{formatCompactUsd(pair.reserveUSD)}</span>
+                    <div className="flex items-center gap-2 justify-end">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedPoolId(pair.id);
+                          navigateRoute('chart');
+                        }}
+                        className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
+                      >
+                        Chart
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          navigateRoute('swap');
+                        }}
+                        className="rounded-xl bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-xs font-semibold px-3 py-1.5 hover:brightness-110 transition-all"
+                      >
+                        Trade
+                      </button>
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-right text-[#5d3bad]">0.3%</span>
-                  <span className="text-sm font-medium text-right text-[#1b1530]">{formatCompactUsd(pair.reserveUSD)}</span>
-                  <div className="flex items-center gap-2 justify-end">
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setSelectedPoolId(pair.id);
-                        navigateRoute('chart');
-                      }}
-                      className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
-                    >
-                      Chart
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        navigateRoute('swap');
-                      }}
-                      className="rounded-xl bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-xs font-semibold px-3 py-1.5 hover:brightness-110 transition-all"
-                    >
-                      Trade
-                    </button>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -2044,52 +2066,59 @@ const App = () => {
           </div>
 
           <div className="space-y-2">
-            {(subgraphPairs.length ? subgraphPairs : []).map((pool) => (
-              <div
-                key={pool.id}
-                className="grid grid-cols-[minmax(220px,1.6fr)_minmax(120px,1fr)_minmax(100px,0.8fr)_minmax(100px,0.9fr)_minmax(110px,0.9fr)_minmax(250px,1.2fr)] items-center gap-x-3 rounded-[18px] bg-[#ece9f4] px-4 py-3"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="relative h-9 w-[3rem] flex-shrink-0">
-                    <span className="absolute left-0 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
-                      {pool.token0.symbol === 'REEF' ? <Uik.ReefIcon className="h-4.5 w-4.5" /> : pool.token0.symbol.slice(0, 1)}
-                    </span>
-                    <span className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-sm font-bold text-[#574a75] shadow-sm">
-                      {pool.token1.symbol.slice(0, 1)}
-                    </span>
+            {(subgraphPairs.length ? subgraphPairs : []).map((pool) => {
+              const token0Symbol = getPairTokenDisplaySymbol(pool.token0);
+              const token1Symbol = getPairTokenDisplaySymbol(pool.token1);
+              const token0IsReef = isPairTokenReef(pool.token0);
+              const token1IsReef = isPairTokenReef(pool.token1);
+
+              return (
+                <div
+                  key={pool.id}
+                  className="grid grid-cols-[minmax(220px,1.6fr)_minmax(120px,1fr)_minmax(100px,0.8fr)_minmax(100px,0.9fr)_minmax(110px,0.9fr)_minmax(250px,1.2fr)] items-center gap-x-3 rounded-[18px] bg-[#ece9f4] px-4 py-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="relative h-9 w-[3rem] flex-shrink-0">
+                      <span className="absolute left-0 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
+                        {token0IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5" /> : token0Symbol.slice(0, 1)}
+                      </span>
+                      <span className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-sm font-bold text-[#574a75] shadow-sm">
+                        {token1IsReef ? <Uik.ReefIcon className="h-4 w-4 text-[#7a3bbd]" /> : token1Symbol.slice(0, 1)}
+                      </span>
+                    </div>
+                    <span className="text-[0.95rem] font-semibold text-[#1f2743]">{token0Symbol} / {token1Symbol}</span>
                   </div>
-                  <span className="text-[0.95rem] font-semibold text-[#1f2743]">{pool.token0.symbol} / {pool.token1.symbol}</span>
-                </div>
 
-                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">
-                  {asNumber(pool.reserve0).toFixed(2)} / {asNumber(pool.reserve1).toFixed(2)}
-                </span>
-                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.reserveUSD)}</span>
-                <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.volumeUSD)}</span>
-                <span className="text-center text-[0.95rem] font-semibold text-[#2fad73]">{formatTokenCount(pool.txCount)}</span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">
+                    {asNumber(pool.reserve0).toFixed(2)} / {asNumber(pool.reserve1).toFixed(2)}
+                  </span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.reserveUSD)}</span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#1f2743]">{formatUsd(pool.volumeUSD)}</span>
+                  <span className="text-center text-[0.95rem] font-semibold text-[#2fad73]">{formatTokenCount(pool.txCount)}</span>
 
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigateRoute('pool-detail', { poolId: pool.id });
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    View
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigateRoute('swap')}
-                    className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#6b33b4] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
-                  >
-                    <Coins className="h-3.5 w-3.5" />
-                    Trade
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigateRoute('pool-detail', { poolId: pool.id });
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigateRoute('swap')}
+                      className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#6b33b4] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
+                    >
+                      <Coins className="h-3.5 w-3.5" />
+                      Trade
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {!subgraphPairs.length ? (
               <div className="rounded-[18px] bg-[#ece9f4] px-4 py-6 text-center text-sm text-[#8e899c]">
                 No pairs available from subgraph.

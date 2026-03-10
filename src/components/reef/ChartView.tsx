@@ -7,7 +7,7 @@ import { useReefPrice } from '@/hooks/useReefPrice';
 import { contracts } from '@/lib/config';
 
 const POOL_ADDRESS = '0x3D37D5452BDeA164666291890D2830A82be141E1';
-const WREEF_ADDRESS = contracts.wrappedReef;
+const WRAPPED_REEF_ADDRESS = contracts.wrappedReef;
 
 const TIMEFRAMES: Timeframe[] = ['1h', '1D', '1W', '1M'];
 const CHART_TABS = ['Price', 'Volume'] as const;
@@ -147,7 +147,7 @@ const ChartView = ({ onNavigate }: ChartViewProps) => {
                   </div>
                 </div>
                 <div>
-                  <p className="text-base font-semibold text-[var(--text)]">REEF / WREEF</p>
+                  <p className="text-base font-semibold text-[var(--text)]">REEF / REEF</p>
                   <p className="text-xs text-[var(--text-light)]">0.3% fee · Reefswap</p>
                 </div>
               </div>
@@ -213,7 +213,7 @@ const ChartView = ({ onNavigate }: ChartViewProps) => {
               {[
                 { label: 'Pool address', value: `${POOL_ADDRESS.slice(0, 8)}…${POOL_ADDRESS.slice(-6)}` },
                 { label: 'Token 1', value: 'REEF (native)' },
-                { label: 'Token 2', value: `WREEF (${WREEF_ADDRESS.slice(0, 6)}…)` },
+                { label: 'Token 2', value: `REEF (wrapped ${WRAPPED_REEF_ADDRESS.slice(0, 6)}…)` },
                 { label: 'Fee tier', value: '0.3%' },
               ].map((item) => (
                 <div key={item.label} className="flex justify-between items-center">
@@ -229,7 +229,7 @@ const ChartView = ({ onNavigate }: ChartViewProps) => {
             <h3 className="text-base font-semibold mb-3" style={{ color: 'var(--text)' }}>Actions</h3>
             <div className="space-y-2">
               <Uik.Button
-                text="Trade REEF → WREEF"
+                text="Trade REEF"
                 fill
                 size="large"
                 className="w-full"
