@@ -10,7 +10,7 @@ import {
 } from 'wagmi';
 import { Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
-import { erc20Abi, reefswapFactoryAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
+import { erc20Abi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
@@ -199,7 +199,6 @@ const App = () => {
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [routerWrappedToken, setRouterWrappedToken] = useState<Address>(contracts.wrappedReef);
   const [routerWrappedTokenSource, setRouterWrappedTokenSource] = useState<'loading' | 'router' | 'fallback'>('loading');
-  const [firstHopPair, setFirstHopPair] = useState<Address | null>(null);
 
   const [isQuoting, setIsQuoting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -396,7 +395,6 @@ const App = () => {
       setBalanceOut(0n);
       setWalletNativeBalance(0n);
       setAllowance(0n);
-      setFirstHopPair(null);
       return;
     }
 
@@ -445,21 +443,6 @@ const App = () => {
         }
       }
 
-      if (!isWrapPair && swapPath.length >= 2) {
-        const pair = await publicClient.readContract({
-          address: contracts.factory,
-          abi: reefswapFactoryAbi,
-          functionName: 'getPair',
-          args: [swapPath[0], swapPath[1]],
-        });
-        if (pair === '0x0000000000000000000000000000000000000000') {
-          setFirstHopPair(null);
-        } else {
-          setFirstHopPair(pair);
-        }
-      } else {
-        setFirstHopPair(null);
-      }
     } catch (error) {
       showErrorToast(getErrorMessage(error));
     } finally {
