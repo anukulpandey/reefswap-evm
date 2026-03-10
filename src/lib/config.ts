@@ -3,6 +3,7 @@ import { defineChain, getAddress, isAddress, type Address } from 'viem';
 const defaults = {
   transportRpcUrl: '/api/reef-rpc',
   walletChainRpcUrl: 'http://localhost:8545',
+  subgraphUrl: 'http://localhost:8000/subgraphs/name/uniswap-v2-localhost',
   chainId: 13939,
   explorerUrl: 'https://reefscan.com',
   wrappedReef: '0x1C2415Fd6Bc4dD007D28f050eD892C449734c238',
@@ -15,6 +16,7 @@ const env = import.meta.env;
 const chainId = Number(env.VITE_REEF_CHAIN_ID || defaults.chainId);
 const walletChainRpcUrl = env.VITE_REEF_CHAIN_RPC_URL || defaults.walletChainRpcUrl;
 export const reefRpcTransportUrl = env.VITE_REEF_RPC_URL || defaults.transportRpcUrl;
+export const reefSubgraphUrl = env.VITE_SUBGRAPH_URL || defaults.subgraphUrl;
 
 const asAddress = (value: string, label: string): Address => {
   if (!isAddress(value)) {

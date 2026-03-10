@@ -31,4 +31,5 @@ Open [http://localhost:8080](http://localhost:8080).
 
 - Browser RPC transport defaults to `/api/reef-rpc` (proxied by Vite to `http://localhost:8545`).
 - Wallet chain RPC defaults to `http://localhost:8545` (override with `VITE_REEF_CHAIN_RPC_URL`).
+- Subgraph endpoint defaults to `http://localhost:8000/subgraphs/name/uniswap-v2-localhost` (override with `VITE_SUBGRAPH_URL`).
 - For token-to-token swaps, route defaults to `tokenIn -> WREEF -> tokenOut`.
