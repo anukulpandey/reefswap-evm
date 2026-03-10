@@ -21,7 +21,6 @@ import PortfolioSummary from './components/reef/PortfolioSummary';
 import AssetTabs from './components/reef/AssetTabs';
 import ActivityPanel from './components/reef/ActivityPanel';
 import CreatorPage from './components/reef/creator/CreatorPage';
-import ChartView from './components/reef/ChartView';
 import PoolDetailPage from './components/reef/PoolDetailPage';
 import { useReefBalance } from './hooks/useReefBalance';
 import { useReefPrice } from './hooks/useReefPrice';
@@ -90,7 +89,7 @@ const parseRouteLocation = (location: Pick<Location, 'pathname' | 'hash'>): {
   const segments = hashSegments.length ? hashSegments : pathSegments;
   const routeSegment = segments[0] || '';
   const route = ROUTE_ALIAS[routeSegment] || 'tokens';
-  const poolRef = route === 'pool-detail' && segments[1] ? decodeURIComponent(segments[1]) : null;
+  const poolRef = (route === 'pool-detail' || route === 'chart') && segments[1] ? decodeURIComponent(segments[1]) : null;
   return { route, poolRef };
 };
 
@@ -129,9 +128,10 @@ const resolvePoolIdFromRef = (poolRef: string | null | undefined, pairs: Subgrap
 };
 
 const routePath = (route: AppRoute, poolId?: string | null): string => {
-  if (route === 'pool-detail') {
+  if (route === 'pool-detail' || route === 'chart') {
     const normalizedPoolId = String(poolId || '').trim().toLowerCase();
-    return normalizedPoolId ? `/pool/${encodeURIComponent(normalizedPoolId)}` : '/pool';
+    const basePath = route === 'chart' ? '/chart' : '/pool';
+    return normalizedPoolId ? `${basePath}/${encodeURIComponent(normalizedPoolId)}` : basePath;
   }
   return NAV_ROUTES.find((item) => item.route === route)?.path || '/';
 };
@@ -1220,7 +1220,7 @@ const App = () => {
     const syncFromLocation = () => {
       const { route, poolRef } = parseRouteLocation(window.location);
       setActiveRoute(route);
-      if (route === 'pool-detail') {
+      if (route === 'pool-detail' || route === 'chart') {
         setSelectedPoolId(poolRef);
       }
     };
@@ -1234,9 +1234,9 @@ const App = () => {
   }, []);
 
   const navigateRoute = (route: AppRoute, options?: { poolId?: string | null }) => {
-    const poolId = route === 'pool-detail' ? (options?.poolId || selectedPoolId) : undefined;
+    const poolId = route === 'pool-detail' || route === 'chart' ? (options?.poolId || selectedPoolId) : undefined;
     const nextPath = routePath(route, poolId);
-    if (route === 'pool-detail' && poolId) {
+    if ((route === 'pool-detail' || route === 'chart') && poolId) {
       setSelectedPoolId(poolId);
     }
     setActiveRoute(route);
@@ -1246,10 +1246,10 @@ const App = () => {
   };
 
   useEffect(() => {
-    if (activeRoute !== 'pool-detail' || !selectedPoolId) return;
+    if ((activeRoute !== 'pool-detail' && activeRoute !== 'chart') || !selectedPoolId) return;
 
     const normalizedPoolId = selectedPoolId.toLowerCase();
-    const expectedPath = routePath('pool-detail', normalizedPoolId);
+    const expectedPath = routePath(activeRoute, normalizedPoolId);
     if (window.location.pathname !== expectedPath || window.location.hash) {
       window.history.replaceState(null, '', expectedPath);
     }
@@ -2559,7 +2559,7 @@ const App = () => {
                         onClick={(event) => {
                           event.stopPropagation();
                           setSelectedPoolId(pair.id);
-                          navigateRoute('chart');
+                          navigateRoute('chart', { poolId: pair.id });
                         }}
                         className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
                       >
@@ -2734,7 +2734,7 @@ const App = () => {
     </div>
   );
 
-  const chartRouteView = <ChartView onNavigate={navigateRoute} />;
+  const chartRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} />;
   const poolDetailRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} />;
 
   return (
