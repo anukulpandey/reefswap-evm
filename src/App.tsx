@@ -10,7 +10,7 @@ import {
 } from 'wagmi';
 import { ArrowUpDown, ChevronDown, Coins, Search, Upload } from 'lucide-react';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
-import { erc20Abi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
+import { erc20Abi, reefswapFactoryAbi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
 import TokenSelect from './components/TokenSelect';
 import { defaultTokens, nativeReef, type TokenOption } from './lib/tokens';
@@ -219,6 +219,12 @@ const getAmountOut = (amountIn: bigint, reserveIn: bigint, reserveOut: bigint): 
   return (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
 };
 
+const applySlippage = (amount: bigint, slippageBps: bigint): bigint => {
+  if (amount <= 0n) return 0n;
+  const discount = (amount * slippageBps) / 10_000n;
+  return amount > discount ? amount - discount : 0n;
+};
+
 const initialInputToken = defaultTokens[0];
 const initialOutputToken = defaultTokens.find((token) => (
   !token.isNative &&
@@ -327,15 +333,28 @@ const App = () => {
   const [openTokenMenu, setOpenTokenMenu] = useState<'in' | 'out' | null>(null);
   const [tokenMenuSearch, setTokenMenuSearch] = useState('');
   const [menuTokenBalances, setMenuTokenBalances] = useState<Record<string, bigint>>({});
+  const [isNewPositionOpen, setIsNewPositionOpen] = useState(false);
+  const [newPositionTokenA, setNewPositionTokenA] = useState<TokenOption>(initialInputToken);
+  const [newPositionTokenB, setNewPositionTokenB] = useState<TokenOption>(initialOutputToken || nativeReef);
+  const [newPositionAmountAText, setNewPositionAmountAText] = useState('');
+  const [newPositionAmountBText, setNewPositionAmountBText] = useState('');
+  const [newPositionBalanceA, setNewPositionBalanceA] = useState<bigint>(0n);
+  const [newPositionBalanceB, setNewPositionBalanceB] = useState<bigint>(0n);
+  const [newPositionAllowanceA, setNewPositionAllowanceA] = useState<bigint>(0n);
+  const [newPositionAllowanceB, setNewPositionAllowanceB] = useState<bigint>(0n);
+  const [isRefreshingNewPosition, setIsRefreshingNewPosition] = useState(false);
+  const [isApprovingNewPosition, setIsApprovingNewPosition] = useState(false);
+  const [isCreatingNewPosition, setIsCreatingNewPosition] = useState(false);
   const swapCardRef = useRef<HTMLDivElement | null>(null);
 
   const {
     data: subgraphPairs = [],
     isLoading: isPoolsLoading,
     isError: hasPoolsError,
+    refetch: refetchSubgraphPairs,
   } = useSubgraphPairs(200);
   const { data: subgraphTokens = [] } = useSubgraphTokens(300);
-  const { data: subgraphFactory } = useSubgraphFactory();
+  const { data: subgraphFactory, refetch: refetchSubgraphFactory } = useSubgraphFactory();
 
   const showInfoToast = useCallback((message: string) => {
     Uik.notify.info({ message });
@@ -513,6 +532,12 @@ const App = () => {
   const selectableTokens = useMemo(() => (
     tokens.filter((token) => !isWrappedReefToken(token))
   ), [isWrappedReefToken, tokens]);
+  const newPositionTokenOptions = useMemo(() => (
+    selectableTokens.filter((token) => token.isNative || Boolean(token.address))
+  ), [selectableTokens]);
+  const resolveLiquidityTokenAddress = useCallback((token: TokenOption): Address | null => (
+    token.isNative ? wrappedReefAddress : token.address
+  ), [wrappedReefAddress]);
 
   const inputTokenOptions = useMemo(() => {
     const filtered = selectableTokens.filter((token) => hasAnyPoolForToken(token));
@@ -552,6 +577,29 @@ const App = () => {
     if (hasCurrent) return;
     setTokenOut(outputTokenOptions[0]);
   }, [outputTokenOptions, tokenOut]);
+
+  useEffect(() => {
+    if (!newPositionTokenOptions.length) return;
+
+    const hasTokenA = newPositionTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(newPositionTokenA));
+    if (!hasTokenA) {
+      setNewPositionTokenA(newPositionTokenOptions[0]);
+      return;
+    }
+
+    const hasTokenB = newPositionTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(newPositionTokenB));
+    if (!hasTokenB) {
+      const nextToken = newPositionTokenOptions.find((token) => dedupeTokenKey(token) !== dedupeTokenKey(newPositionTokenA))
+        || newPositionTokenOptions[0];
+      setNewPositionTokenB(nextToken);
+      return;
+    }
+
+    if (dedupeTokenKey(newPositionTokenA) === dedupeTokenKey(newPositionTokenB)) {
+      const nextToken = newPositionTokenOptions.find((token) => dedupeTokenKey(token) !== dedupeTokenKey(newPositionTokenA));
+      if (nextToken) setNewPositionTokenB(nextToken);
+    }
+  }, [newPositionTokenA, newPositionTokenB, newPositionTokenOptions]);
 
   useEffect(() => {
     if (!openTokenMenu || !publicClient || !address) {
@@ -717,6 +765,124 @@ const App = () => {
   const tokenOutDisplaySymbol = getTokenDisplaySymbol(tokenOut);
   const formattedBalanceIn = formatDisplayAmount(balanceIn, tokenIn.decimals);
   const formattedBalanceOut = formatDisplayAmount(balanceOut, tokenOut.decimals);
+  const newPositionTokenAAddress = useMemo(
+    () => resolveLiquidityTokenAddress(newPositionTokenA),
+    [newPositionTokenA, resolveLiquidityTokenAddress],
+  );
+  const newPositionTokenBAddress = useMemo(
+    () => resolveLiquidityTokenAddress(newPositionTokenB),
+    [newPositionTokenB, resolveLiquidityTokenAddress],
+  );
+  const newPositionTokenASymbol = getTokenDisplaySymbol(newPositionTokenA);
+  const newPositionTokenBSymbol = getTokenDisplaySymbol(newPositionTokenB);
+  const newPositionAmountARaw = useMemo(() => {
+    if (!newPositionAmountAText) return 0n;
+    try {
+      return parseUnits(newPositionAmountAText, newPositionTokenA.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [newPositionAmountAText, newPositionTokenA.decimals]);
+  const newPositionAmountBRaw = useMemo(() => {
+    if (!newPositionAmountBText) return 0n;
+    try {
+      return parseUnits(newPositionAmountBText, newPositionTokenB.decimals);
+    } catch {
+      return 0n;
+    }
+  }, [newPositionAmountBText, newPositionTokenB.decimals]);
+  const isNewPositionPairValid = Boolean(
+    newPositionTokenAAddress &&
+    newPositionTokenBAddress &&
+    !sameAddress(newPositionTokenAAddress, newPositionTokenBAddress),
+  );
+  const hasInsufficientNewPositionA = newPositionAmountARaw > newPositionBalanceA;
+  const hasInsufficientNewPositionB = newPositionAmountBRaw > newPositionBalanceB;
+  const requiresNewPositionApprovalA = Boolean(
+    isNewPositionPairValid &&
+    newPositionTokenAAddress &&
+    newPositionAmountARaw > 0n &&
+    newPositionAllowanceA < newPositionAmountARaw,
+  );
+  const requiresNewPositionApprovalB = Boolean(
+    isNewPositionPairValid &&
+    newPositionTokenBAddress &&
+    newPositionAmountBRaw > 0n &&
+    newPositionAllowanceB < newPositionAmountBRaw,
+  );
+  const nextNewPositionApproval = useMemo(() => {
+    if (requiresNewPositionApprovalA && newPositionTokenAAddress) {
+      return {
+        address: newPositionTokenAAddress,
+        symbol: newPositionTokenASymbol,
+      };
+    }
+    if (requiresNewPositionApprovalB && newPositionTokenBAddress) {
+      return {
+        address: newPositionTokenBAddress,
+        symbol: newPositionTokenBSymbol,
+      };
+    }
+    return null;
+  }, [
+    newPositionTokenAAddress,
+    newPositionTokenASymbol,
+    newPositionTokenBAddress,
+    newPositionTokenBSymbol,
+    requiresNewPositionApprovalA,
+    requiresNewPositionApprovalB,
+  ]);
+  const formattedNewPositionBalanceA = formatDisplayAmount(newPositionBalanceA, newPositionTokenA.decimals, 6);
+  const formattedNewPositionBalanceB = formatDisplayAmount(newPositionBalanceB, newPositionTokenB.decimals, 6);
+  const newPositionActionLabel = useMemo(() => {
+    if (!isConnected) return isConnecting ? 'Connecting...' : 'Connect Wallet';
+    if (isWrongChain) return isSwitching ? 'Switching...' : 'Switch To Reef Chain';
+    if (!isNewPositionPairValid) return 'Select two different tokens';
+    if (newPositionAmountARaw <= 0n || newPositionAmountBRaw <= 0n) return 'Enter token amounts';
+    if (hasInsufficientNewPositionA) return `Insufficient ${newPositionTokenASymbol}`;
+    if (hasInsufficientNewPositionB) return `Insufficient ${newPositionTokenBSymbol}`;
+    if (nextNewPositionApproval) {
+      return isApprovingNewPosition ? `Approving ${nextNewPositionApproval.symbol}...` : `Approve ${nextNewPositionApproval.symbol}`;
+    }
+    return isCreatingNewPosition ? 'Creating Position...' : 'Create Position';
+  }, [
+    hasInsufficientNewPositionA,
+    hasInsufficientNewPositionB,
+    isConnected,
+    isConnecting,
+    isCreatingNewPosition,
+    isNewPositionPairValid,
+    isWrongChain,
+    isSwitching,
+    isApprovingNewPosition,
+    newPositionAmountARaw,
+    newPositionAmountBRaw,
+    newPositionTokenASymbol,
+    newPositionTokenBSymbol,
+    nextNewPositionApproval,
+  ]);
+  const isNewPositionActionDisabled = useMemo(() => {
+    if (!isConnected) return isConnecting;
+    if (isWrongChain) return isSwitching;
+    if (isApprovingNewPosition || isCreatingNewPosition || isRefreshingNewPosition) return true;
+    if (!isNewPositionPairValid) return true;
+    if (newPositionAmountARaw <= 0n || newPositionAmountBRaw <= 0n) return true;
+    if (hasInsufficientNewPositionA || hasInsufficientNewPositionB) return true;
+    return false;
+  }, [
+    hasInsufficientNewPositionA,
+    hasInsufficientNewPositionB,
+    isConnected,
+    isConnecting,
+    isCreatingNewPosition,
+    isNewPositionPairValid,
+    isWrongChain,
+    isSwitching,
+    isApprovingNewPosition,
+    isRefreshingNewPosition,
+    newPositionAmountARaw,
+    newPositionAmountBRaw,
+  ]);
   const refreshChainState = useCallback(async () => {
     if (!publicClient || !address) {
       setBalanceIn(0n);
@@ -777,6 +943,81 @@ const App = () => {
       setIsRefreshing(false);
     }
   }, [address, isWrapPair, publicClient, showErrorToast, swapPath, swapSpender, tokenIn, tokenOut]);
+
+  const refreshNewPositionState = useCallback(async () => {
+    if (!publicClient || !address || !isNewPositionOpen) {
+      setNewPositionBalanceA(0n);
+      setNewPositionBalanceB(0n);
+      setNewPositionAllowanceA(0n);
+      setNewPositionAllowanceB(0n);
+      return;
+    }
+
+    setIsRefreshingNewPosition(true);
+    try {
+      const nativeBalance = await publicClient.getBalance({ address });
+
+      const readTokenBalance = async (token: TokenOption): Promise<bigint> => {
+        if (token.isNative) return nativeBalance;
+        if (!token.address) return 0n;
+        try {
+          return await publicClient.readContract({
+            address: token.address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          });
+        } catch {
+          return 0n;
+        }
+      };
+
+      const readTokenAllowance = async (tokenAddress: Address | null): Promise<bigint> => {
+        if (!tokenAddress) return 0n;
+        try {
+          return await publicClient.readContract({
+            address: tokenAddress,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [address, contracts.router],
+          });
+        } catch {
+          return 0n;
+        }
+      };
+
+      const [balanceA, balanceB, allowanceAValue, allowanceBValue] = await Promise.all([
+        readTokenBalance(newPositionTokenA),
+        readTokenBalance(newPositionTokenB),
+        readTokenAllowance(newPositionTokenAAddress),
+        readTokenAllowance(newPositionTokenBAddress),
+      ]);
+      setNewPositionBalanceA(balanceA);
+      setNewPositionBalanceB(balanceB);
+      setNewPositionAllowanceA(allowanceAValue);
+      setNewPositionAllowanceB(allowanceBValue);
+    } catch (error) {
+      showErrorToast(getErrorMessage(error));
+    } finally {
+      setIsRefreshingNewPosition(false);
+    }
+  }, [
+    address,
+    isNewPositionOpen,
+    newPositionTokenA,
+    newPositionTokenAAddress,
+    newPositionTokenB,
+    newPositionTokenBAddress,
+    publicClient,
+    showErrorToast,
+  ]);
+
+  useEffect(() => {
+    if (!isNewPositionOpen) return;
+    refreshNewPositionState().catch(() => {
+      // no-op
+    });
+  }, [isNewPositionOpen, refreshNewPositionState]);
 
   useEffect(() => {
     if (!publicClient) {
@@ -1914,6 +2155,330 @@ const App = () => {
     sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF' || token.symbol.toUpperCase() === 'WREEF'
   ), [wrappedReefAddress]);
 
+  const closeNewPositionModal = useCallback(() => {
+    setIsNewPositionOpen(false);
+    setNewPositionAmountAText('');
+    setNewPositionAmountBText('');
+  }, []);
+
+  const openNewPositionModal = useCallback(() => {
+    if (newPositionTokenOptions.length < 2) {
+      showErrorToast('Need at least two tokens to create a position.');
+      return;
+    }
+
+    const resolveDefaultToken = (tokenId: string): TokenOption | null => {
+      if (sameAddress(tokenId, wrappedReefAddress)) {
+        return newPositionTokenOptions.find((token) => token.isNative) || nativeReef;
+      }
+      return newPositionTokenOptions.find((token) => token.address && sameAddress(token.address, tokenId)) || null;
+    };
+
+    let tokenA = newPositionTokenA;
+    let tokenB = newPositionTokenB;
+
+    if (
+      selectedPool &&
+      isAddress(selectedPool.token0.id) &&
+      isAddress(selectedPool.token1.id)
+    ) {
+      tokenA = resolveDefaultToken(selectedPool.token0.id) || tokenA;
+      tokenB = resolveDefaultToken(selectedPool.token1.id) || tokenB;
+    }
+
+    if (!newPositionTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(tokenA))) {
+      tokenA = newPositionTokenOptions[0];
+    }
+
+    if (!newPositionTokenOptions.some((token) => dedupeTokenKey(token) === dedupeTokenKey(tokenB))) {
+      tokenB = newPositionTokenOptions.find((token) => dedupeTokenKey(token) !== dedupeTokenKey(tokenA)) || newPositionTokenOptions[0];
+    }
+
+    if (dedupeTokenKey(tokenA) === dedupeTokenKey(tokenB)) {
+      tokenB = newPositionTokenOptions.find((token) => dedupeTokenKey(token) !== dedupeTokenKey(tokenA)) || tokenB;
+    }
+
+    setNewPositionTokenA(tokenA);
+    setNewPositionTokenB(tokenB);
+    setNewPositionAmountAText('');
+    setNewPositionAmountBText('');
+    setIsNewPositionOpen(true);
+  }, [
+    newPositionTokenA,
+    newPositionTokenB,
+    newPositionTokenOptions,
+    selectedPool,
+    showErrorToast,
+    wrappedReefAddress,
+  ]);
+
+  const onSelectNewPositionTokenA = useCallback((token: TokenOption) => {
+    setNewPositionTokenA(token);
+    if (dedupeTokenKey(token) === dedupeTokenKey(newPositionTokenB)) {
+      const nextToken = newPositionTokenOptions.find((option) => dedupeTokenKey(option) !== dedupeTokenKey(token));
+      if (nextToken) setNewPositionTokenB(nextToken);
+    }
+  }, [newPositionTokenB, newPositionTokenOptions]);
+
+  const onSelectNewPositionTokenB = useCallback((token: TokenOption) => {
+    setNewPositionTokenB(token);
+    if (dedupeTokenKey(token) === dedupeTokenKey(newPositionTokenA)) {
+      const nextToken = newPositionTokenOptions.find((option) => dedupeTokenKey(option) !== dedupeTokenKey(token));
+      if (nextToken) setNewPositionTokenA(nextToken);
+    }
+  }, [newPositionTokenA, newPositionTokenOptions]);
+
+  const approveNewPositionToken = useCallback(async () => {
+    if (!walletClient || !publicClient || !address || !nextNewPositionApproval) return;
+
+    setIsApprovingNewPosition(true);
+    showInfoToast(`Submitting ${nextNewPositionApproval.symbol} approval...`);
+    try {
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: nextNewPositionApproval.address,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [contracts.router, MAX_APPROVAL],
+      });
+      setLastTxHash(hash);
+      showInfoToast(`Approval submitted.\nTx: ${shortAddress(hash)}\nWaiting for confirmation...`);
+      await publicClient.waitForTransactionReceipt({ hash });
+      showSuccessToast(`${nextNewPositionApproval.symbol} approval confirmed.`);
+      await refreshNewPositionState();
+    } catch (error) {
+      showErrorToast(getErrorMessage(error));
+    } finally {
+      setIsApprovingNewPosition(false);
+    }
+  }, [
+    address,
+    nextNewPositionApproval,
+    publicClient,
+    refreshNewPositionState,
+    showErrorToast,
+    showInfoToast,
+    showSuccessToast,
+    walletClient,
+  ]);
+
+  const createNewPosition = useCallback(async () => {
+    if (
+      !walletClient ||
+      !publicClient ||
+      !address ||
+      !newPositionTokenAAddress ||
+      !newPositionTokenBAddress ||
+      !isNewPositionPairValid ||
+      newPositionAmountARaw <= 0n ||
+      newPositionAmountBRaw <= 0n
+    ) {
+      return;
+    }
+
+    setIsCreatingNewPosition(true);
+    showInfoToast('Submitting add liquidity...');
+
+    try {
+      if (newPositionTokenA.isNative) {
+        const wrapHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: wrappedReefAddress,
+          abi: wrappedReefAbi,
+          functionName: 'deposit',
+          args: [],
+          value: newPositionAmountARaw,
+        });
+        showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+      }
+
+      if (newPositionTokenB.isNative) {
+        const wrapHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: wrappedReefAddress,
+          abi: wrappedReefAbi,
+          functionName: 'deposit',
+          args: [],
+          value: newPositionAmountBRaw,
+        });
+        showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+      }
+
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
+      const minAmountA = applySlippage(newPositionAmountARaw, parsedSlippageBps);
+      const minAmountB = applySlippage(newPositionAmountBRaw, parsedSlippageBps);
+
+      const hash = await walletClient.writeContract({
+        account: address,
+        chain: reefChain,
+        address: contracts.router,
+        abi: reefswapRouterAbi,
+        functionName: 'addLiquidity',
+        args: [
+          newPositionTokenAAddress,
+          newPositionTokenBAddress,
+          newPositionAmountARaw,
+          newPositionAmountBRaw,
+          minAmountA,
+          minAmountB,
+          address,
+          deadline,
+        ],
+      });
+
+      setLastTxHash(hash);
+      showInfoToast(`Liquidity add submitted.\nTx: ${shortAddress(hash)}\nWaiting for confirmation...`);
+      await publicClient.waitForTransactionReceipt({ hash });
+      showSuccessToast('Position created successfully.');
+
+      setIsNewPositionOpen(false);
+      setNewPositionAmountAText('');
+      setNewPositionAmountBText('');
+
+      await refreshChainState();
+      await Promise.all([
+        refreshNewPositionState(),
+        refetchSubgraphPairs(),
+        refetchSubgraphFactory(),
+      ]);
+
+      const pairAddress = await publicClient.readContract({
+        address: contracts.factory,
+        abi: reefswapFactoryAbi,
+        functionName: 'getPair',
+        args: [newPositionTokenAAddress, newPositionTokenBAddress],
+      });
+      const normalizedPair = getAddress(pairAddress);
+      if (!sameAddress(normalizedPair, '0x0000000000000000000000000000000000000000')) {
+        setSelectedPoolId(normalizedPair);
+        navigateRoute('pool-detail', { poolId: normalizedPair });
+      }
+    } catch (error) {
+      showErrorToast(getErrorMessage(error));
+    } finally {
+      setIsCreatingNewPosition(false);
+    }
+  }, [
+    address,
+    isNewPositionPairValid,
+    newPositionAmountARaw,
+    newPositionAmountBRaw,
+    newPositionTokenA.isNative,
+    newPositionTokenAAddress,
+    newPositionTokenB.isNative,
+    newPositionTokenBAddress,
+    parsedSlippageBps,
+    publicClient,
+    refetchSubgraphFactory,
+    refetchSubgraphPairs,
+    refreshChainState,
+    refreshNewPositionState,
+    showErrorToast,
+    showInfoToast,
+    showSuccessToast,
+    walletClient,
+    wrappedReefAddress,
+  ]);
+
+  const submitNewPosition = useCallback(async () => {
+    if (!isConnected) {
+      await connectWallet();
+      return;
+    }
+    if (isWrongChain) {
+      await switchToReef();
+      return;
+    }
+    if (!isNewPositionPairValid) return;
+    if (nextNewPositionApproval) {
+      await approveNewPositionToken();
+      return;
+    }
+    await createNewPosition();
+  }, [
+    approveNewPositionToken,
+    connectWallet,
+    createNewPosition,
+    isConnected,
+    isNewPositionPairValid,
+    isWrongChain,
+    nextNewPositionApproval,
+    switchToReef,
+  ]);
+
+  const newPositionModalView = (
+    <Uik.Modal
+      className="new-position-modal"
+      title="Create New Position"
+      isOpen={isNewPositionOpen}
+      onClose={closeNewPositionModal}
+      footer={(
+        <Uik.Button
+          text={newPositionActionLabel}
+          fill
+          size="large"
+          disabled={isNewPositionActionDisabled}
+          onClick={() => {
+            submitNewPosition().catch(() => {});
+          }}
+        />
+      )}
+    >
+      <div className="new-position-modal__content">
+        <p className="new-position-modal__note">
+          Pick two tokens and deposit liquidity. If REEF is selected, it will be wrapped automatically for the pool.
+        </p>
+
+        <div className="field-grid">
+          <TokenSelect
+            label="Token A"
+            value={newPositionTokenA}
+            options={newPositionTokenOptions}
+            onChange={onSelectNewPositionTokenA}
+          />
+          <label className="amount-field">
+            <span>Amount A</span>
+            <input
+              value={newPositionAmountAText}
+              onChange={(event) => setNewPositionAmountAText(normalizeInput(event.target.value))}
+              inputMode="decimal"
+              placeholder="0.0"
+            />
+            <small>Balance: {formattedNewPositionBalanceA} {newPositionTokenASymbol}</small>
+          </label>
+        </div>
+
+        <div className="field-grid">
+          <TokenSelect
+            label="Token B"
+            value={newPositionTokenB}
+            options={newPositionTokenOptions}
+            onChange={onSelectNewPositionTokenB}
+          />
+          <label className="amount-field">
+            <span>Amount B</span>
+            <input
+              value={newPositionAmountBText}
+              onChange={(event) => setNewPositionAmountBText(normalizeInput(event.target.value))}
+              inputMode="decimal"
+              placeholder="0.0"
+            />
+            <small>Balance: {formattedNewPositionBalanceB} {newPositionTokenBSymbol}</small>
+          </label>
+        </div>
+
+        {!isNewPositionPairValid ? (
+          <p className="new-position-modal__error">Select two different tokens.</p>
+        ) : null}
+      </div>
+    </Uik.Modal>
+  );
+
   const poolsRouteView = (
     <div className="max-w-7xl mx-auto px-6 py-8">
       <div className="mb-8">
@@ -1930,7 +2495,7 @@ const App = () => {
               <span className="text-base font-semibold text-[#1b1530]">All Pools</span>
               <button
                 type="button"
-                onClick={() => navigateRoute('swap')}
+                onClick={openNewPositionModal}
                 className="rounded-full bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-sm font-semibold px-4 py-2 hover:brightness-110 transition-all"
               >
                 + New Position
@@ -2213,6 +2778,8 @@ const App = () => {
           </div>
         )}
       </main>
+
+      {newPositionModalView}
 
       {!isConnected && (
         <footer className="fixed bottom-0 left-0 right-0 bg-[#f2f0f8] border-t border-border px-6 py-3">

@@ -770,6 +770,35 @@ input {
   font-size: 0.74rem;
 }
 
+.new-position-modal .uik-modal__container .uik-modal__popup {
+  width: min(620px, calc(100vw - 24px)) !important;
+  background-color: #efedf6 !important;
+}
+
+.new-position-modal .uik-modal__footer .uik-button {
+  width: 100%;
+}
+
+.new-position-modal__content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.new-position-modal__note {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #77708f;
+  line-height: 1.35;
+}
+
+.new-position-modal__error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #b24471;
+  font-weight: 600;
+}
+
 .swap-slider-group {
   margin-top: 12px;
   margin-bottom: 10px;
@@ -1106,30 +1135,6 @@ input {
 .creator__preview .uik-button {
   margin-top: 16px;
   width: 100%;
-}
-
-.confirm-token-summary {
-  display: grid;
-  gap: 10px;
-}
-
-.confirm-token-summary-item {
-  border: 1px solid #ddceef;
-  background: #faf6ff;
-  border-radius: 12px;
-  padding: 10px;
-}
-
-.confirm-token-summary-item span {
-  display: block;
-  font-size: 0.78rem;
-  color: #7f7693;
-  margin-bottom: 4px;
-}
-
-.confirm-token-summary-item strong {
-  display: block;
-  font-size: 0.95rem;
 }
 
 .route-placeholder {
