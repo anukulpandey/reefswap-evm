@@ -3,6 +3,7 @@ export interface Token {
   name: string;
   symbol: string;
   icon: string;
+  iconUrl?: string | null;
   price: number;
   priceChange: number;
   balance: number;

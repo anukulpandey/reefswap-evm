@@ -5,10 +5,21 @@ import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
 import { useAccount } from 'wagmi';
 import { useReefTransactions } from '@/hooks/useReefTransactions';
 import { useReefExplorer } from '@/hooks/useReefExplorer';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type SyntheticEvent } from 'react';
+import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 
 const ITEMS_PER_PAGE = 5;
 type PageItem = number | 'ellipsis';
+
+const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
+  if (img.dataset.fallbackApplied === 'true') return;
+  img.dataset.fallbackApplied = 'true';
+  img.src = resolveTokenIconUrl({ address, symbol, iconUrl: null });
+};
+
+const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?: string | null, symbol?: string | null) => {
+  applyFallbackTokenIcon(event.currentTarget, address, symbol);
+};
 
 const ActivityPanel = () => {
   const { showBalances } = useBalanceVisibility();
@@ -152,9 +163,16 @@ const ActivityPanel = () => {
                         tx.isNativeAsset ? (
                           <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
                         ) : (
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">
-                            {tx.symbol.slice(0, 1)}
-                          </span>
+                          <img
+                            src={resolveTokenIconUrl({
+                              address: tx.tokenAddress,
+                              symbol: tx.symbol,
+                              iconUrl: tx.tokenIconUrl,
+                            })}
+                            alt={`${tx.symbol} icon`}
+                            className="h-5 w-5 rounded-full object-cover"
+                            onError={(event) => handleTokenIconError(event, tx.tokenAddress, tx.symbol)}
+                          />
                         )
                       )}
                     </div>
@@ -192,9 +210,16 @@ const ActivityPanel = () => {
                       tx.isNativeAsset ? (
                         <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
                       ) : (
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#e9e1f3] text-[10px] font-bold text-[#7a3bbd]">
-                          {tx.symbol.slice(0, 1)}
-                        </span>
+                        <img
+                          src={resolveTokenIconUrl({
+                            address: tx.tokenAddress,
+                            symbol: tx.symbol,
+                            iconUrl: tx.tokenIconUrl,
+                          })}
+                          alt={`${tx.symbol} icon`}
+                          className="h-5 w-5 rounded-full object-cover"
+                          onError={(event) => handleTokenIconError(event, tx.tokenAddress, tx.symbol)}
+                        />
                       )
                     )}
                   </div>

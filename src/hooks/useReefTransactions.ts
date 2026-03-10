@@ -9,6 +9,7 @@ export interface ReefTransaction {
   id: string;
   txHash: string | null;
   tokenAddress: string | null;
+  tokenIconUrl?: string | null;
   isNativeAsset: boolean;
   type: 'sent' | 'received';
   amount: number;
@@ -48,7 +49,12 @@ type ExplorerAddressTokenTransfer = {
   from?: ExplorerAddressRef | null;
   to?: ExplorerAddressRef | null;
   total?: { value?: string | null; decimals?: string | number | null } | null;
-  token?: { symbol?: string | null; address_hash?: string | null; address?: string | null } | null;
+  token?: {
+    symbol?: string | null;
+    address_hash?: string | null;
+    address?: string | null;
+    icon_url?: string | null;
+  } | null;
   timestamp?: string | null;
   log_index?: number | null;
   token_type?: string | null;
@@ -136,6 +142,7 @@ export function useReefTransactions(address: string | undefined) {
               id: `native:${tx.hash}`,
               txHash: tx.hash,
               tokenAddress: null,
+              tokenIconUrl: null,
               isNativeAsset: true,
               type: isSent ? 'sent' : 'received',
               amount: toFiniteNumber(valueRaw, REEF_DECIMALS),
@@ -170,6 +177,7 @@ export function useReefTransactions(address: string | undefined) {
               id: `erc20:${transfer.transaction_hash || 'unknown'}:${String(transfer.log_index ?? index)}`,
               txHash: transfer.transaction_hash || null,
               tokenAddress: transfer.token?.address_hash || transfer.token?.address || null,
+              tokenIconUrl: transfer.token?.icon_url || null,
               isNativeAsset: false,
               type: fromLower === lowerAddress ? 'sent' : 'received',
               amount,

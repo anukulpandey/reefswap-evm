@@ -1,6 +1,6 @@
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type SyntheticEvent } from 'react';
 import { type Token } from '@/lib/mockData';
 import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
 import { useSendTransaction, useWaitForTransactionReceipt, useWriteContract } from 'wagmi';
@@ -8,12 +8,23 @@ import { isAddress, parseUnits } from 'viem';
 import { Loader2, ArrowUpRight } from 'lucide-react';
 import UiKit from '@reef-chain/ui-kit';
 import { erc20Abi } from '@/lib/abi';
+import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 
 interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
   token: Token | null;
 }
+
+const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
+  if (img.dataset.fallbackApplied === 'true') return;
+  img.dataset.fallbackApplied = 'true';
+  img.src = resolveTokenIconUrl({ address, symbol, iconUrl: null });
+};
+
+const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?: string | null, symbol?: string | null) => {
+  applyFallbackTokenIcon(event.currentTarget, address, symbol);
+};
 
 const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
   const [recipient, setRecipient] = useState('');
@@ -122,6 +133,7 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
   };
 
   if (!token) return null;
+  const tokenIconSrc = resolveTokenIconUrl({ address: token.address, symbol: token.symbol, iconUrl: token.iconUrl });
 
   const formatBalance = (val: number) =>
     new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 }).format(val);
@@ -141,10 +153,15 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
         <div className="px-6 pt-6 pb-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-white/70 shadow-sm flex items-center justify-center">
-              {token.icon === 'reef' ? (
+              {token.isNative ? (
                 <UiKit.ReefIcon className="h-6 w-6 text-[#7a3bbd]" />
               ) : (
-                <span className="text-lg">{token.icon}</span>
+                <img
+                  src={tokenIconSrc}
+                  alt={`${token.symbol} icon`}
+                  className="h-6 w-6 rounded-full object-cover"
+                  onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
+                />
               )}
             </div>
             <div>
@@ -178,10 +195,15 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
                 className={`flex-1 bg-transparent text-2xl font-semibold placeholder:text-[#c5c0d0] outline-none disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${hasAmountError ? 'text-red-500' : 'text-[#1b1530]'}`}
               />
               <div className="flex items-center gap-1.5 rounded-full bg-[#f1edf8] px-3 py-1.5">
-                {token.icon === 'reef' ? (
+                {token.isNative ? (
                   <UiKit.ReefIcon className="h-4 w-4 text-[#7a3bbd]" />
                 ) : (
-                  <span className="text-sm">{token.icon}</span>
+                  <img
+                    src={tokenIconSrc}
+                    alt={`${token.symbol} icon`}
+                    className="h-4 w-4 rounded-full object-cover"
+                    onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
+                  />
                 )}
                 <span className="text-sm font-semibold text-[#1b1530]">{token.symbol}</span>
               </div>

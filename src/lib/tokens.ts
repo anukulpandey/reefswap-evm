@@ -7,6 +7,7 @@ export type TokenOption = {
   decimals: number;
   address: Address | null;
   isNative: boolean;
+  iconUrl?: string | null;
 };
 
 export const nativeReef: TokenOption = {
@@ -15,6 +16,7 @@ export const nativeReef: TokenOption = {
   decimals: 18,
   address: null,
   isNative: true,
+  iconUrl: null,
 };
 
 const wrappedReef: TokenOption = {
@@ -23,6 +25,7 @@ const wrappedReef: TokenOption = {
   decimals: 18,
   address: contracts.wrappedReef,
   isNative: false,
+  iconUrl: null,
 };
 
 const parseEnvTokenList = (): TokenOption[] => {
@@ -35,6 +38,7 @@ const parseEnvTokenList = (): TokenOption[] => {
       name: string;
       decimals: number;
       address: string;
+      iconUrl?: string | null;
     }>;
 
     return parsed
@@ -45,6 +49,7 @@ const parseEnvTokenList = (): TokenOption[] => {
         decimals: token.decimals,
         address: getAddress(token.address),
         isNative: false,
+        iconUrl: token.iconUrl || null,
       }));
   } catch {
     return [];

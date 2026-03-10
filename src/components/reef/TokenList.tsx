@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { FaPaperPlane } from 'react-icons/fa';
 import { faArrowsRotate } from '@fortawesome/free-solid-svg-icons';
 import { type Token } from '@/lib/mockData';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type SyntheticEvent } from 'react';
 import UiKit from '@reef-chain/ui-kit';
 import SendModal from './SendModal';
 import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
@@ -14,6 +14,7 @@ import { formatUnits } from 'viem';
 import { erc20Abi } from '@/lib/abi';
 import { contracts, reefChain } from '@/lib/config';
 import { tokenKey, type TokenOption } from '@/lib/tokens';
+import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 
 interface TokenListProps {
   onSwap?: () => void;
@@ -27,6 +28,16 @@ const toFinite = (value: string): number => {
 
 const sameAddress = (a?: string | null, b?: string | null): boolean =>
   String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
+const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
+  if (img.dataset.fallbackApplied === 'true') return;
+  img.dataset.fallbackApplied = 'true';
+  img.src = resolveTokenIconUrl({ address, symbol, iconUrl: null });
+};
+
+const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?: string | null, symbol?: string | null) => {
+  applyFallbackTokenIcon(event.currentTarget, address, symbol);
+};
 
 const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
   const [sendModalOpen, setSendModalOpen] = useState(false);
@@ -117,6 +128,7 @@ const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
           name: token.name,
           symbol: token.symbol,
           icon: token.isNative ? 'reef' : token.symbol.charAt(0),
+          iconUrl: token.iconUrl || null,
           price,
           priceChange: isReefLike ? change24h : 0,
           balance,
@@ -175,10 +187,15 @@ const TokenList = ({ onSwap, tokenOptions }: TokenListProps) => {
             >
               <div className="flex items-center gap-4">
                 <div className="w-12 h-12 flex items-center justify-center">
-                  {token.icon === 'reef' ? (
+                  {token.isNative ? (
                     <UiKit.ReefIcon className="h-10 w-10 text-[#7a3bbd]" />
                   ) : (
-                    <span className="text-lg">{token.icon}</span>
+                    <img
+                      src={resolveTokenIconUrl({ address: token.address, symbol: token.symbol, iconUrl: token.iconUrl })}
+                      alt={`${token.symbol} icon`}
+                      className="h-10 w-10 rounded-full object-cover"
+                      onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
+                    />
                   )}
                 </div>
                 <div>
