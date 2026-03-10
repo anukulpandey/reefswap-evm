@@ -7,7 +7,8 @@ import { useReefTransactions } from '@/hooks/useReefTransactions';
 import { useReefExplorer } from '@/hooks/useReefExplorer';
 import { useEffect, useMemo, useState } from 'react';
 
-const ITEMS_PER_PAGE = 8;
+const ITEMS_PER_PAGE = 5;
+type PageItem = number | 'ellipsis';
 
 const ActivityPanel = () => {
   const { showBalances } = useBalanceVisibility();
@@ -44,6 +45,41 @@ const ActivityPanel = () => {
     const start = (page - 1) * ITEMS_PER_PAGE;
     return transactions.slice(start, start + ITEMS_PER_PAGE);
   }, [page, transactions]);
+  const paginationItems = useMemo<PageItem[]>(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
+
+    const pages = new Set<number>([1, totalPages, page - 1, page, page + 1]);
+    if (page <= 3) {
+      pages.add(2);
+      pages.add(3);
+    }
+    if (page >= totalPages - 2) {
+      pages.add(totalPages - 1);
+      pages.add(totalPages - 2);
+    }
+
+    const sorted = Array.from(pages)
+      .filter((value) => value >= 1 && value <= totalPages)
+      .sort((a, b) => a - b);
+
+    const output: PageItem[] = [];
+    sorted.forEach((value, index) => {
+      if (index === 0) {
+        output.push(value);
+        return;
+      }
+
+      const previous = sorted[index - 1];
+      if (value - previous > 1) {
+        output.push('ellipsis');
+      }
+      output.push(value);
+    });
+
+    return output;
+  }, [page, totalPages]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -182,21 +218,31 @@ const ActivityPanel = () => {
           >
             ‹
           </button>
-          {Array.from({ length: totalPages }, (_, index) => {
-            const pageNumber = index + 1;
-            const isActive = pageNumber === page;
+          {paginationItems.map((item, index) => {
+            if (item === 'ellipsis') {
+              return (
+                <span
+                  key={`ellipsis-${index}`}
+                  className="inline-flex h-8 min-w-8 items-center justify-center rounded-[10px] bg-transparent px-1 text-sm font-semibold text-[#8e899c]"
+                >
+                  ...
+                </span>
+              );
+            }
+
+            const isActive = item === page;
             return (
               <button
-                key={pageNumber}
+                key={item}
                 type="button"
-                onClick={() => setPage(pageNumber)}
+                onClick={() => setPage(item)}
                 className={`h-8 min-w-8 rounded-[10px] px-2.5 text-sm font-semibold ${
                   isActive
                     ? 'bg-gradient-to-r from-[#a93185] to-[#7a32b4] text-white'
                     : 'bg-[#e2dcea] text-[#4a4260]'
                 }`}
               >
-                {pageNumber}
+                {item}
               </button>
             );
           })}
