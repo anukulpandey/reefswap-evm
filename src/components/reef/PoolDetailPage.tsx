@@ -1,40 +1,89 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import { ArrowLeftRight } from 'lucide-react';
 import { faArrowsRotate, faRightLeft } from '@fortawesome/free-solid-svg-icons';
+import { type SubgraphPair } from '@/lib/subgraph';
+import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import './pool-detail.css';
 
 type ActionTab = 'trade' | 'stake' | 'unstake';
 type ChartTab = 'price' | 'liquidity' | 'volume' | 'fees';
 type Timeframe = '1h' | '1D' | '1W' | '1M';
 
-const yAxisLabels = Array.from({ length: 12 }, () => '0.62 REEF');
+type PoolDetailPageProps = {
+  pair: SubgraphPair | null;
+};
 
-const poolStatsTokens = [
-  {
-    symbol: 'REEF',
-    percent: '38.37',
-    usdPrice: '$0.0001',
-    ratio: '0.62 FLPR',
-    totalLiquidity: '3.37 k',
-    myLiquidity: '3.37 k',
-    fees24h: '0',
-  },
-  {
-    symbol: 'FLPR',
-    percent: '61.63',
-    usdPrice: '$0.0000',
-    ratio: '1.61 REEF',
-    totalLiquidity: '5.41 k',
-    myLiquidity: '5.41 k',
-    fees24h: '0',
-  },
-];
+const asNumber = (value: string | number | null | undefined): number => {
+  const parsed = Number.parseFloat(String(value ?? '0'));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
-const PoolDetailPage = (): JSX.Element => {
+const formatUsd = (value: string | number | null | undefined): string => (
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(asNumber(value))
+);
+
+const formatTokenAmount = (value: string | number | null | undefined): string => (
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
+  }).format(asNumber(value))
+);
+
+const formatRate = (value: string | number | null | undefined): string => (
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 8,
+  }).format(asNumber(value))
+);
+
+const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
+  const { data: pairTransactions } = useSubgraphPairTransactions(pair?.id, 20);
+
+  const token0Symbol = pair?.token0.symbol || 'REEF';
+  const token1Symbol = pair?.token1.symbol || 'TOKEN';
+  const reserve0 = asNumber(pair?.reserve0);
+  const reserve1 = asNumber(pair?.reserve1);
+  const reserveTotal = reserve0 + reserve1;
+  const token0Weight = reserveTotal > 0 ? (reserve0 / reserveTotal) * 100 : 0;
+  const token1Weight = reserveTotal > 0 ? (reserve1 / reserveTotal) * 100 : 0;
+
+  const yAxisLabels = useMemo(() => {
+    const marker = `${formatRate(pair?.token0Price || 0)} ${token1Symbol}`;
+    return Array.from({ length: 12 }, () => marker);
+  }, [pair?.token0Price, token1Symbol]);
+
+  const poolStatsTokens = [
+    {
+      symbol: token0Symbol,
+      percent: token0Weight.toFixed(2),
+      usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve0, 1) : 0),
+      ratio: `1 ${token0Symbol} = ${formatRate(pair?.token0Price)} ${token1Symbol}`,
+      totalLiquidity: formatTokenAmount(reserve0),
+      myLiquidity: '-',
+      fees24h: '-',
+    },
+    {
+      symbol: token1Symbol,
+      percent: token1Weight.toFixed(2),
+      usdPrice: formatUsd(asNumber(pair?.reserveUSD) > 0 ? asNumber(pair?.reserveUSD) / Math.max(reserve1, 1) : 0),
+      ratio: `1 ${token1Symbol} = ${formatRate(pair?.token1Price)} ${token0Symbol}`,
+      totalLiquidity: formatTokenAmount(reserve1),
+      myLiquidity: '-',
+      fees24h: '-',
+    },
+  ];
+
+  const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
+  const txSummaryText = `Recent: ${totalTransactions} tx`;
 
   return (
     <div className="pool">
@@ -47,14 +96,14 @@ const PoolDetailPage = (): JSX.Element => {
                   <span className="pool-stats__pool-select-pair--reef">
                     <Uik.ReefIcon className="pool-stats__pool-select-pair-icon" />
                   </span>
-                  <span className="pool-stats__pool-select-pair--flpr">F</span>
+                  <span className="pool-stats__pool-select-pair--flpr">{token1Symbol.slice(0, 1)}</span>
                 </div>
-                <span className="pool-stats__pool-select-name">REEF / FLPR</span>
+                <span className="pool-stats__pool-select-name">{token0Symbol} / {token1Symbol}</span>
               </div>
 
               <Uik.Button
                 className="pool-stats__transactions-btn"
-                text="Show Transactions"
+                text={txSummaryText}
                 size="small"
                 icon={faRightLeft}
                 onClick={() => {}}
@@ -64,19 +113,19 @@ const PoolDetailPage = (): JSX.Element => {
             <div className="pool-stats__main-stats">
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">Total Value Locked</div>
-                <div className="pool-stats__main-stat-value">$ 0.49</div>
+                <div className="pool-stats__main-stat-value">{formatUsd(pair?.reserveUSD)}</div>
               </div>
 
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">My Liquidity</div>
-                <div className="pool-stats__main-stat-value">$ 0.49</div>
+                <div className="pool-stats__main-stat-value">-</div>
               </div>
 
               <div className="pool-stats__main-stat">
                 <div className="pool-stats__main-stat-label">24h Volume</div>
                 <div className="pool-stats__main-stat-value">
-                  <span>$ 0</span>
-                  <Uik.Trend type="good" direction="up" text="0.00%" />
+                  <span>{formatUsd(pair?.volumeUSD)}</span>
+                  <Uik.Trend type="good" direction="up" text={`${pair?.txCount || '0'} tx`} />
                 </div>
               </div>
             </div>
@@ -90,7 +139,7 @@ const PoolDetailPage = (): JSX.Element => {
                     <span
                       className={`pool-stats__token-image ${token.symbol === 'REEF' ? 'pool-stats__token-image--reef' : 'pool-stats__token-image--flpr'}`}
                     >
-                      {token.symbol === 'REEF' ? <Uik.ReefIcon className="pool-stats__token-image-icon" /> : 'F'}
+                      {token.symbol === 'REEF' ? <Uik.ReefIcon className="pool-stats__token-image-icon" /> : token.symbol.slice(0, 1)}
                     </span>
                     <div>
                       <div className="pool-stats__token-name">{token.symbol}</div>
@@ -145,8 +194,8 @@ const PoolDetailPage = (): JSX.Element => {
                   <Uik.ReefIcon className="pool-icon__reef-mark" />
                 </span>
                 <div>
-                  <p className="pool-token-input__symbol">REEF</p>
-                  <p className="pool-token-input__balance">3470.0108 REEF</p>
+                  <p className="pool-token-input__symbol">{token0Symbol}</p>
+                  <p className="pool-token-input__balance">{formatTokenAmount(reserve0)} {token0Symbol}</p>
                 </div>
               </div>
               <p className="pool-token-input__amount">0.0</p>
@@ -174,18 +223,18 @@ const PoolDetailPage = (): JSX.Element => {
 
             <div className="pool-token-input">
               <div className="pool-token-input__left">
-                <span className="pool-icon pool-icon--flpr">F</span>
+                <span className="pool-icon pool-icon--flpr">{token1Symbol.slice(0, 1)}</span>
                 <div>
-                  <p className="pool-token-input__symbol">FLPR</p>
-                  <p className="pool-token-input__balance">42.42 B FLPR</p>
+                  <p className="pool-token-input__symbol">{token1Symbol}</p>
+                  <p className="pool-token-input__balance">{formatTokenAmount(reserve1)} {token1Symbol}</p>
                 </div>
               </div>
               <p className="pool-token-input__amount">0.0</p>
             </div>
 
             <div className="pool-trade-meta">
-              <div><span>Rate</span><strong>1 REEF = 1.6061 FLPR</strong></div>
-              <div><span>Fee</span><strong>0 $</strong></div>
+              <div><span>Rate</span><strong>1 {token0Symbol} = {formatRate(pair?.token0Price)} {token1Symbol}</strong></div>
+              <div><span>Fee</span><strong>0.3%</strong></div>
               <div><span>Slippage</span><strong>0.8%</strong></div>
             </div>
 
@@ -216,7 +265,7 @@ const PoolDetailPage = (): JSX.Element => {
                 value={chartTab}
                 onChange={(value) => setChartTab(value as ChartTab)}
                 options={[
-                  { value: 'price', text: 'FLPR/REEF' },
+                  { value: 'price', text: `${token1Symbol}/${token0Symbol}` },
                   { value: 'liquidity', text: 'Liquidity' },
                   { value: 'volume', text: 'Volume' },
                   { value: 'fees', text: 'Fees' },
@@ -240,7 +289,7 @@ const PoolDetailPage = (): JSX.Element => {
                 <div className="pool-detail-chart__grid" />
                 <span className="pool-detail-chart__line pool-detail-chart__line--vertical" />
                 <span className="pool-detail-chart__line pool-detail-chart__line--horizontal" />
-                <span className="pool-detail-chart__price-tag">0.62 REEF</span>
+                <span className="pool-detail-chart__price-tag">{formatRate(pair?.token0Price)} {token1Symbol}</span>
               </div>
               <div className="pool-detail-chart__axis">
                 {yAxisLabels.map((label, index) => (
