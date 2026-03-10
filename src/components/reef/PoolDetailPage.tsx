@@ -27,6 +27,7 @@ type Timeframe = '1h' | '1D' | '1W' | '1M';
 type PoolDetailPageProps = {
   pair: SubgraphPair | null;
   wrappedTokenAddress: Address;
+  mode?: 'full' | 'chart';
 };
 
 type ChartPoint = {
@@ -43,7 +44,19 @@ type TradeToken = {
   isCanonicalReef: boolean;
 };
 
-const CHART_SAMPLE_SIZE = 500;
+type PoolTransactionTab = 'All' | 'Swap' | 'Mint' | 'Burn';
+
+type PoolTransactionEntry = {
+  id: string;
+  type: Exclude<PoolTransactionTab, 'All'>;
+  timestamp: number;
+  txHash: string;
+  description: string;
+  token0Amount: number;
+  token1Amount: number;
+};
+
+const CHART_SAMPLE_SIZE = 1000;
 const SWAP_FEE_RATE = 0.003;
 const MAX_APPROVAL = (2n ** 256n) - 1n;
 const TX_DEADLINE_SECONDS = 60 * 20;
@@ -138,6 +151,16 @@ const formatCompact = (value: string | number | null | undefined): string => (
     maximumFractionDigits: 2,
   }).format(asNumber(value))
 );
+
+const formatPoolTransactionTime = (timestamp: number): string => {
+  if (!timestamp) return 'Unknown';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(timestamp * 1000));
+};
 
 const deriveSwapPrice = (swap: SubgraphSwap): number => {
   const token0Delta = Math.max(asNumber(swap.amount0In), asNumber(swap.amount0Out));
@@ -376,7 +399,7 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
   return <div className="pool-detail-chart__canvas" ref={chartContainerRef} />;
 };
 
-const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX.Element => {
+const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetailPageProps): JSX.Element => {
   const { address, chainId, isConnected } = useAccount();
   const { connectors, connectAsync, isPending: isConnecting } = useConnect();
   const publicClient = usePublicClient({ chainId: reefChain.id });
@@ -414,6 +437,8 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   const [quoteError, setQuoteError] = useState('');
   const [quoteNote, setQuoteNote] = useState('');
   const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
+  const [isTransactionsOpen, setTransactionsOpen] = useState(false);
+  const [transactionsTab, setTransactionsTab] = useState<PoolTransactionTab>('All');
 
   const {
     data: pairTransactions,
@@ -486,7 +511,6 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
   const token0Weight = reserveTotal > 0 ? (reserve0 / reserveTotal) * 100 : 0;
   const token1Weight = reserveTotal > 0 ? (reserve1 / reserveTotal) * 100 : 0;
   const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
-  const txSummaryText = totalTransactions > 0 ? `${totalTransactions} tx` : 'Show Transactions';
   const volume24hUsd = useMemo(() => {
     const swaps = pairTransactions?.swaps || [];
     if (!swaps.length) return 0;
@@ -497,6 +521,67 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
       return sum + Math.max(0, asNumber(swap.amountUSD));
     }, 0);
   }, [pairTransactions?.swaps]);
+  const explorerTxBaseUrl = useMemo(() => {
+    const explorerUrl = reefChain.blockExplorers?.default?.url || 'https://reefscan.com';
+    return explorerUrl.replace(/\/$/, '');
+  }, []);
+  const allPoolTransactions = useMemo<PoolTransactionEntry[]>(() => {
+    if (!pairTransactions) return [];
+
+    const swaps = pairTransactions.swaps.map((swap) => {
+      const amount0In = Math.max(0, asNumber(swap.amount0In));
+      const amount0Out = Math.max(0, asNumber(swap.amount0Out));
+      const amount1In = Math.max(0, asNumber(swap.amount1In));
+      const amount1Out = Math.max(0, asNumber(swap.amount1Out));
+      const token0ToToken1 = amount0In > 0 || (amount1Out > 0 && amount0Out === 0);
+
+      return {
+        id: swap.id,
+        type: 'Swap' as const,
+        timestamp: asTimestamp(swap.timestamp),
+        txHash: swap.transaction?.id || swap.id,
+        description: `Traded ${token0ToToken1 ? token0Symbol : token1Symbol} for ${token0ToToken1 ? token1Symbol : token0Symbol}`,
+        token0Amount: Math.max(amount0In, amount0Out),
+        token1Amount: Math.max(amount1In, amount1Out),
+      };
+    });
+
+    const mints = pairTransactions.mints.map((mint) => ({
+      id: mint.id,
+      type: 'Mint' as const,
+      timestamp: asTimestamp(mint.timestamp),
+      txHash: mint.transaction?.id || mint.id,
+      description: 'Staked',
+      token0Amount: Math.abs(asNumber(mint.amount0)),
+      token1Amount: Math.abs(asNumber(mint.amount1)),
+    }));
+
+    const burns = pairTransactions.burns.map((burn) => ({
+      id: burn.id,
+      type: 'Burn' as const,
+      timestamp: asTimestamp(burn.timestamp),
+      txHash: burn.transaction?.id || burn.id,
+      description: 'Unstaked',
+      token0Amount: Math.abs(asNumber(burn.amount0)),
+      token1Amount: Math.abs(asNumber(burn.amount1)),
+    }));
+
+    return [...swaps, ...mints, ...burns].sort((a, b) => {
+      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+      return b.id.localeCompare(a.id);
+    });
+  }, [pairTransactions, token0Symbol, token1Symbol]);
+  const visiblePoolTransactions = useMemo(() => (
+    transactionsTab === 'All'
+      ? allPoolTransactions
+      : allPoolTransactions.filter((transaction) => transaction.type === transactionsTab)
+  ), [allPoolTransactions, transactionsTab]);
+  const openPoolTransaction = useCallback((txHash: string) => {
+    if (!txHash) return;
+    const prefixedHash = txHash.startsWith('0x') ? txHash : `0x${txHash}`;
+    const txUrl = `${explorerTxBaseUrl}/tx/${encodeURIComponent(prefixedHash)}`;
+    window.open(txUrl, '_blank', 'noopener,noreferrer');
+  }, [explorerTxBaseUrl]);
   const myLiquidityShare = useMemo(() => {
     if (lpTokenBalance <= 0n || lpTotalSupply <= 0n) return 0;
     return Number((lpTokenBalance * 1_000_000n) / lpTotalSupply) / 1_000_000;
@@ -1232,6 +1317,71 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
 
   const latestChartPoint = chartPoints[chartPoints.length - 1];
   const latestChartValue = latestChartPoint?.value ?? 0;
+  const isChartOnly = mode === 'chart';
+
+  const chartPanel = (
+    <div className={`pool-chart ${isChartOnly ? 'pool-chart--chart-only' : ''}`}>
+      <Uik.Card>
+        <div className="pool-chart__top">
+          <Uik.Tabs
+            value={chartTab}
+            onChange={(value) => setChartTab(value as ChartTab)}
+            options={[
+              { value: 'price', text: `${token1Symbol}/${token0Symbol}` },
+              { value: 'liquidity', text: 'Liquidity' },
+              { value: 'volume', text: 'Volume' },
+              { value: 'fees', text: 'Fees' },
+            ]}
+          />
+
+          <Uik.Tabs
+            value={timeframe}
+            onChange={(value) => setTimeframe(value as Timeframe)}
+            options={[
+              { value: '1h', text: '1h' },
+              { value: '1D', text: '1D' },
+              { value: '1W', text: '1W' },
+              { value: '1M', text: '1M' },
+            ]}
+          />
+        </div>
+
+        <div className="pool-detail-chart">
+          {!pair ? (
+            <div className="pool-detail-chart__status">Select a pool to load chart data.</div>
+          ) : isChartLoading ? (
+            <div className="pool-detail-chart__status">
+              <Uik.Loading />
+            </div>
+          ) : hasChartError ? (
+            <div className="pool-detail-chart__status">Could not load chart data from subgraph.</div>
+          ) : (
+            <PoolSeriesChart points={chartPoints} chartTab={chartTab} timeframe={timeframe} />
+          )}
+        </div>
+
+        <div className="pool-detail-chart__summary">
+          <div className="pool-detail-chart__summary-label">
+            <span>{tabLabelByValue[chartTab]} ({timeframe})</span>
+            <strong>{formatChartValue(chartTab, latestChartValue, token0Symbol, token1Symbol)}</strong>
+          </div>
+          <div className="pool-detail-chart__summary-meta">
+            {totalTransactions > 0 ? `${formatCompact(totalTransactions)} tx indexed` : 'No transactions indexed yet'}
+          </div>
+        </div>
+      </Uik.Card>
+    </div>
+  );
+
+  if (isChartOnly) {
+    return (
+      <div className="pool pool--chart-only">
+        <section className="pool__content pool__content--chart-only">
+          {chartPanel}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="pool">
@@ -1269,10 +1419,13 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
 
               <Uik.Button
                 className="pool-stats__transactions-btn"
-                text={txSummaryText}
+                text="Transactions"
                 size="small"
                 icon={faRightLeft}
-                onClick={() => {}}
+                onClick={() => {
+                  setTransactionsTab('All');
+                  setTransactionsOpen(true);
+                }}
               />
             </div>
 
@@ -1656,58 +1809,101 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress }: PoolDetailPageProps): JSX
           )}
         </div>
 
-        <div className="pool-chart">
-          <Uik.Card>
-            <div className="pool-chart__top">
-              <Uik.Tabs
-                value={chartTab}
-                onChange={(value) => setChartTab(value as ChartTab)}
-                options={[
-                  { value: 'price', text: `${token1Symbol}/${token0Symbol}` },
-                  { value: 'liquidity', text: 'Liquidity' },
-                  { value: 'volume', text: 'Volume' },
-                  { value: 'fees', text: 'Fees' },
-                ]}
-              />
-
-              <Uik.Tabs
-                value={timeframe}
-                onChange={(value) => setTimeframe(value as Timeframe)}
-                options={[
-                  { value: '1h', text: '1h' },
-                  { value: '1D', text: '1D' },
-                  { value: '1W', text: '1W' },
-                  { value: '1M', text: '1M' },
-                ]}
-              />
-            </div>
-
-            <div className="pool-detail-chart">
-              {!pair ? (
-                <div className="pool-detail-chart__status">Select a pool to load chart data.</div>
-              ) : isChartLoading ? (
-                <div className="pool-detail-chart__status">
-                  <Uik.Loading />
-                </div>
-              ) : hasChartError ? (
-                <div className="pool-detail-chart__status">Could not load chart data from subgraph.</div>
-              ) : (
-                <PoolSeriesChart points={chartPoints} chartTab={chartTab} timeframe={timeframe} />
-              )}
-            </div>
-
-            <div className="pool-detail-chart__summary">
-              <div className="pool-detail-chart__summary-label">
-                <span>{tabLabelByValue[chartTab]} ({timeframe})</span>
-                <strong>{formatChartValue(chartTab, latestChartValue, token0Symbol, token1Symbol)}</strong>
-              </div>
-              <div className="pool-detail-chart__summary-meta">
-                {totalTransactions > 0 ? `${formatCompact(totalTransactions)} tx indexed` : 'No transactions indexed yet'}
-              </div>
-            </div>
-          </Uik.Card>
-        </div>
+        {chartPanel}
       </section>
+
+      <Uik.Modal
+        className="pool-transactions-modal"
+        title="Transactions"
+        isOpen={isTransactionsOpen}
+        onClose={() => setTransactionsOpen(false)}
+      >
+        <div className="pool-transactions-modal__content">
+          <Uik.Tabs
+            value={transactionsTab}
+            options={[
+              { value: 'All', text: 'All' },
+              { value: 'Swap', text: 'Trade' },
+              { value: 'Mint', text: 'Stake' },
+              { value: 'Burn', text: 'Unstake' },
+            ]}
+            onChange={(value) => setTransactionsTab(value as PoolTransactionTab)}
+          />
+
+          <div className="pool-transactions-modal__meta">
+            {visiblePoolTransactions.length} transaction{visiblePoolTransactions.length === 1 ? '' : 's'}
+          </div>
+
+          {isChartLoading ? (
+            <div className="pool-transactions-modal__status">
+              <Uik.Loading />
+            </div>
+          ) : hasChartError ? (
+            <div className="pool-transactions-modal__status">Could not load transactions from subgraph.</div>
+          ) : visiblePoolTransactions.length === 0 ? (
+            <div className="pool-transactions-modal__status">No transactions found for this pool.</div>
+          ) : (
+            <div className="pool-transactions-modal__table-wrap">
+              <table className="pool-transactions-modal__table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Tx</th>
+                    <th>Time</th>
+                    <th>{token0Symbol} Amount</th>
+                    <th>{token1Symbol} Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiblePoolTransactions.map((transaction) => {
+                    const transactionIcon = transaction.type === 'Swap'
+                      ? faRightLeft
+                      : transaction.type === 'Mint'
+                        ? faCoins
+                        : faArrowUpFromBracket;
+                    const transactionClassName = transaction.type === 'Swap'
+                      ? 'trade'
+                      : transaction.type === 'Mint'
+                        ? 'stake'
+                        : 'unstake';
+                    return (
+                      <tr
+                        key={transaction.id}
+                        onClick={() => openPoolTransaction(transaction.txHash)}
+                      >
+                        <td>
+                          <div className="pool-transactions-modal__type">
+                            <Uik.Icon
+                              icon={transactionIcon}
+                              className={`pool-transactions-modal__type-icon pool-transactions-modal__type-icon--${transactionClassName}`}
+                            />
+                            <span>{transaction.description}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="pool-transactions-modal__tx-link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openPoolTransaction(transaction.txHash);
+                            }}
+                          >
+                            {shortAddress(transaction.txHash)}
+                          </button>
+                        </td>
+                        <td>{formatPoolTransactionTime(transaction.timestamp)}</td>
+                        <td className="pool-transactions-modal__amount">{formatTokenAmount(transaction.token0Amount)}</td>
+                        <td className="pool-transactions-modal__amount">{formatTokenAmount(transaction.token1Amount)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Uik.Modal>
     </div>
   );
 };

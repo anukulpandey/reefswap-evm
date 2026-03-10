@@ -46,6 +46,21 @@ const SLIPPAGE_SLIDER_HELPERS = [
 ];
 
 type AppRoute = 'tokens' | 'swap' | 'pools' | 'create-token' | 'chart' | 'pool-detail';
+type NewPositionInputSide = 'A' | 'B';
+
+type UserPoolPosition = {
+  pairId: string;
+  token0Symbol: string;
+  token1Symbol: string;
+  token0IsReef: boolean;
+  token1IsReef: boolean;
+  lpBalance: bigint;
+  lpTotalSupply: bigint;
+  lpShare: number;
+  usdValue: number;
+  token0Amount: number;
+  token1Amount: number;
+};
 
 const isWrapPairSelection = (a: TokenOption, b: TokenOption, wrappedTokenAddress: Address): boolean =>
   (a.isNative && sameAddress(b.address, wrappedTokenAddress)) || (b.isNative && sameAddress(a.address, wrappedTokenAddress));
@@ -142,6 +157,18 @@ const trimDecimalString = (value: string): string => {
   return trimmed === '' ? '0' : trimmed;
 };
 
+const parseTokenInputRaw = (value: string, decimals: number): bigint | null => {
+  const normalized = value.trim();
+  if (!normalized) return 0n;
+  const candidate = normalized.endsWith('.') ? normalized.slice(0, -1) : normalized;
+  if (!candidate) return 0n;
+  try {
+    return parseUnits(candidate, decimals);
+  } catch {
+    return null;
+  }
+};
+
 const asNumber = (value: string | number | null | undefined): number => {
   const parsed = Number.parseFloat(String(value ?? '0'));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -176,6 +203,13 @@ const formatRateValue = (value: string | number | null | undefined): string => (
     minimumFractionDigits: 0,
     maximumFractionDigits: 8,
   }).format(asNumber(value))
+);
+
+const formatPositionAmount = (value: number): string => (
+  new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  }).format(value)
 );
 
 const formatTokenPickerBalance = (raw: bigint | undefined, decimals: number): string => {
@@ -307,7 +341,10 @@ const App = () => {
   const [allowance, setAllowance] = useState<bigint>(0n);
   const [routerWrappedToken, setRouterWrappedToken] = useState<Address>(contracts.wrappedReef);
   const [routerWrappedTokenSource, setRouterWrappedTokenSource] = useState<'loading' | 'router' | 'fallback' | 'subgraph'>('loading');
+  const [routerFactoryAddress, setRouterFactoryAddress] = useState<Address>(contracts.factory);
+  const [routerFactorySource, setRouterFactorySource] = useState<'loading' | 'router' | 'fallback' | 'subgraph'>('loading');
   const [isWrappedTokenContractMissing, setIsWrappedTokenContractMissing] = useState(false);
+  const [isFactoryContractMissing, setIsFactoryContractMissing] = useState(false);
 
   const [isQuoting, setIsQuoting] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -338,6 +375,7 @@ const App = () => {
   const [newPositionTokenB, setNewPositionTokenB] = useState<TokenOption>(initialOutputToken || nativeReef);
   const [newPositionAmountAText, setNewPositionAmountAText] = useState('');
   const [newPositionAmountBText, setNewPositionAmountBText] = useState('');
+  const [newPositionEditedSide, setNewPositionEditedSide] = useState<NewPositionInputSide | null>(null);
   const [newPositionBalanceA, setNewPositionBalanceA] = useState<bigint>(0n);
   const [newPositionBalanceB, setNewPositionBalanceB] = useState<bigint>(0n);
   const [newPositionAllowanceA, setNewPositionAllowanceA] = useState<bigint>(0n);
@@ -345,7 +383,10 @@ const App = () => {
   const [isRefreshingNewPosition, setIsRefreshingNewPosition] = useState(false);
   const [isApprovingNewPosition, setIsApprovingNewPosition] = useState(false);
   const [isCreatingNewPosition, setIsCreatingNewPosition] = useState(false);
+  const [poolPositionBalances, setPoolPositionBalances] = useState<Record<string, { balance: bigint; totalSupply: bigint }>>({});
+  const [isRefreshingPoolPositions, setIsRefreshingPoolPositions] = useState(false);
   const swapCardRef = useRef<HTMLDivElement | null>(null);
+  const poolPositionRequestIdRef = useRef(0);
 
   const {
     data: subgraphPairs = [],
@@ -369,6 +410,10 @@ const App = () => {
   }, []);
 
   const wrappedReefAddress = routerWrappedTokenSource === 'loading' ? contracts.wrappedReef : routerWrappedToken;
+  const factoryAddress = routerFactorySource === 'loading' ? contracts.factory : routerFactoryAddress;
+  const subgraphFactoryAddress = useMemo(() => (
+    subgraphFactory?.id && isAddress(subgraphFactory.id) ? getAddress(subgraphFactory.id) : null
+  ), [subgraphFactory]);
   const subgraphWrappedTokenAddress = useMemo(() => {
     const candidate = subgraphTokens.find((token) => token.symbol?.toUpperCase() === 'WREEF' && isAddress(token.id));
     return candidate ? getAddress(candidate.id) : null;
@@ -758,7 +803,7 @@ const App = () => {
     return quotedOutRaw - discount;
   }, [isWrapPair, parsedSlippageBps, quotedOutRaw]);
 
-  const requiresApproval = !usesDirectPairSwap && !isWrapPair && !tokenIn.isNative && parsedAmountIn > 0n && allowance < parsedAmountIn;
+  const requiresApproval = !usesDirectPairSwap && !isWrapPair && parsedAmountIn > 0n && allowance < parsedAmountIn;
   const hasInsufficientBalance = parsedAmountIn > balanceIn;
 
   const tokenInDisplaySymbol = getTokenDisplaySymbol(tokenIn);
@@ -775,6 +820,100 @@ const App = () => {
   );
   const newPositionTokenASymbol = getTokenDisplaySymbol(newPositionTokenA);
   const newPositionTokenBSymbol = getTokenDisplaySymbol(newPositionTokenB);
+  const newPositionExistingPair = useMemo(() => {
+    if (!newPositionTokenAAddress || !newPositionTokenBAddress) return null;
+    return subgraphPairs.find((pair) => (
+      (sameAddress(pair.token0.id, newPositionTokenAAddress) && sameAddress(pair.token1.id, newPositionTokenBAddress)) ||
+      (sameAddress(pair.token0.id, newPositionTokenBAddress) && sameAddress(pair.token1.id, newPositionTokenAAddress))
+    )) || null;
+  }, [newPositionTokenAAddress, newPositionTokenBAddress, subgraphPairs]);
+  const newPositionPairReserves = useMemo(() => {
+    if (!newPositionExistingPair || !newPositionTokenAAddress || !newPositionTokenBAddress) return null;
+
+    const token0Decimals = Number.parseInt(newPositionExistingPair.token0.decimals, 10);
+    const token1Decimals = Number.parseInt(newPositionExistingPair.token1.decimals, 10);
+    if (!Number.isInteger(token0Decimals) || !Number.isInteger(token1Decimals)) return null;
+
+    try {
+      const reserve0Raw = parseUnits(newPositionExistingPair.reserve0, token0Decimals);
+      const reserve1Raw = parseUnits(newPositionExistingPair.reserve1, token1Decimals);
+      const tokenAIsToken0 = sameAddress(newPositionExistingPair.token0.id, newPositionTokenAAddress);
+      return {
+        reserveA: tokenAIsToken0 ? reserve0Raw : reserve1Raw,
+        reserveB: tokenAIsToken0 ? reserve1Raw : reserve0Raw,
+      };
+    } catch {
+      return null;
+    }
+  }, [newPositionExistingPair, newPositionTokenAAddress, newPositionTokenBAddress]);
+  const hasNewPositionRatioSource = Boolean(
+    newPositionPairReserves &&
+    newPositionPairReserves.reserveA > 0n &&
+    newPositionPairReserves.reserveB > 0n,
+  );
+  const getNewPositionAmountBFromA = useCallback((amountAText: string): string | null => {
+    if (!newPositionPairReserves || newPositionPairReserves.reserveA <= 0n || newPositionPairReserves.reserveB <= 0n) return null;
+    const amountARaw = parseTokenInputRaw(amountAText, newPositionTokenA.decimals);
+    if (amountARaw === null) return null;
+    if (amountARaw <= 0n) return '0';
+    const amountBRaw = (amountARaw * newPositionPairReserves.reserveB) / newPositionPairReserves.reserveA;
+    return trimDecimalString(formatUnits(amountBRaw, newPositionTokenB.decimals));
+  }, [newPositionPairReserves, newPositionTokenA.decimals, newPositionTokenB.decimals]);
+  const getNewPositionAmountAFromB = useCallback((amountBText: string): string | null => {
+    if (!newPositionPairReserves || newPositionPairReserves.reserveA <= 0n || newPositionPairReserves.reserveB <= 0n) return null;
+    const amountBRaw = parseTokenInputRaw(amountBText, newPositionTokenB.decimals);
+    if (amountBRaw === null) return null;
+    if (amountBRaw <= 0n) return '0';
+    const amountARaw = (amountBRaw * newPositionPairReserves.reserveA) / newPositionPairReserves.reserveB;
+    return trimDecimalString(formatUnits(amountARaw, newPositionTokenA.decimals));
+  }, [newPositionPairReserves, newPositionTokenA.decimals, newPositionTokenB.decimals]);
+  const onNewPositionAmountAChange = useCallback((value: string) => {
+    const normalized = normalizeInput(value);
+    setNewPositionEditedSide('A');
+    setNewPositionAmountAText(normalized);
+    if (!normalized) {
+      setNewPositionAmountBText('');
+      return;
+    }
+    const nextAmountB = getNewPositionAmountBFromA(normalized);
+    if (nextAmountB !== null) setNewPositionAmountBText(nextAmountB);
+  }, [getNewPositionAmountBFromA]);
+  const onNewPositionAmountBChange = useCallback((value: string) => {
+    const normalized = normalizeInput(value);
+    setNewPositionEditedSide('B');
+    setNewPositionAmountBText(normalized);
+    if (!normalized) {
+      setNewPositionAmountAText('');
+      return;
+    }
+    const nextAmountA = getNewPositionAmountAFromB(normalized);
+    if (nextAmountA !== null) setNewPositionAmountAText(nextAmountA);
+  }, [getNewPositionAmountAFromB]);
+  useEffect(() => {
+    if (!isNewPositionOpen || !hasNewPositionRatioSource) return;
+
+    if (newPositionEditedSide === 'A' && newPositionAmountAText) {
+      const nextAmountB = getNewPositionAmountBFromA(newPositionAmountAText);
+      if (nextAmountB !== null && nextAmountB !== newPositionAmountBText) {
+        setNewPositionAmountBText(nextAmountB);
+      }
+    }
+
+    if (newPositionEditedSide === 'B' && newPositionAmountBText) {
+      const nextAmountA = getNewPositionAmountAFromB(newPositionAmountBText);
+      if (nextAmountA !== null && nextAmountA !== newPositionAmountAText) {
+        setNewPositionAmountAText(nextAmountA);
+      }
+    }
+  }, [
+    getNewPositionAmountAFromB,
+    getNewPositionAmountBFromA,
+    hasNewPositionRatioSource,
+    isNewPositionOpen,
+    newPositionAmountAText,
+    newPositionAmountBText,
+    newPositionEditedSide,
+  ]);
   const newPositionAmountARaw = useMemo(() => {
     if (!newPositionAmountAText) return 0n;
     try {
@@ -796,6 +935,7 @@ const App = () => {
     newPositionTokenBAddress &&
     !sameAddress(newPositionTokenAAddress, newPositionTokenBAddress),
   );
+  const hasNewPositionNativeSide = newPositionTokenA.isNative || newPositionTokenB.isNative;
   const hasInsufficientNewPositionA = newPositionAmountARaw > newPositionBalanceA;
   const hasInsufficientNewPositionB = newPositionAmountBRaw > newPositionBalanceB;
   const requiresNewPositionApprovalA = Boolean(
@@ -921,12 +1061,13 @@ const App = () => {
       setBalanceIn(inputBalance);
       setBalanceOut(outputBalance);
 
-      if (isWrapPair || tokenIn.isNative || !tokenIn.address) {
+      const approvalTokenAddress = tokenIn.isNative ? wrappedReefAddress : tokenIn.address;
+      if (isWrapPair || !approvalTokenAddress) {
         setAllowance(MAX_APPROVAL);
       } else {
         try {
           const allowanceValue = await publicClient.readContract({
-            address: tokenIn.address,
+            address: approvalTokenAddress,
             abi: erc20Abi,
             functionName: 'allowance',
             args: [address, swapSpender],
@@ -942,7 +1083,7 @@ const App = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [address, isWrapPair, publicClient, showErrorToast, swapPath, swapSpender, tokenIn, tokenOut]);
+  }, [address, isWrapPair, publicClient, showErrorToast, swapPath, swapSpender, tokenIn, tokenOut, wrappedReefAddress]);
 
   const refreshNewPositionState = useCallback(async () => {
     if (!publicClient || !address || !isNewPositionOpen) {
@@ -972,7 +1113,7 @@ const App = () => {
         }
       };
 
-      const readTokenAllowance = async (tokenAddress: Address | null): Promise<bigint> => {
+      const readTokenAllowance = async (token: TokenOption, tokenAddress: Address | null): Promise<bigint> => {
         if (!tokenAddress) return 0n;
         try {
           return await publicClient.readContract({
@@ -989,8 +1130,8 @@ const App = () => {
       const [balanceA, balanceB, allowanceAValue, allowanceBValue] = await Promise.all([
         readTokenBalance(newPositionTokenA),
         readTokenBalance(newPositionTokenB),
-        readTokenAllowance(newPositionTokenAAddress),
-        readTokenAllowance(newPositionTokenBAddress),
+        readTokenAllowance(newPositionTokenA, newPositionTokenAAddress),
+        readTokenAllowance(newPositionTokenB, newPositionTokenBAddress),
       ]);
       setNewPositionBalanceA(balanceA);
       setNewPositionBalanceB(balanceB);
@@ -1051,6 +1192,37 @@ const App = () => {
   }, [publicClient]);
 
   useEffect(() => {
+    if (!publicClient) {
+      setRouterFactorySource('fallback');
+      setRouterFactoryAddress(contracts.factory);
+      return;
+    }
+
+    let isActive = true;
+    setRouterFactorySource('loading');
+    publicClient
+      .readContract({
+        address: contracts.router,
+        abi: reefswapRouterAbi,
+        functionName: 'factory',
+      })
+      .then((result) => {
+        if (!isActive) return;
+        setRouterFactoryAddress(result);
+        setRouterFactorySource('router');
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setRouterFactoryAddress(contracts.factory);
+        setRouterFactorySource('fallback');
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [publicClient]);
+
+  useEffect(() => {
     if (!publicClient || routerWrappedTokenSource === 'loading') {
       setIsWrappedTokenContractMissing(false);
       return;
@@ -1097,6 +1269,54 @@ const App = () => {
       isActive = false;
     };
   }, [publicClient, routerWrappedTokenSource, subgraphWrappedTokenAddress, wrappedReefAddress]);
+
+  useEffect(() => {
+    if (!publicClient || routerFactorySource === 'loading') {
+      setIsFactoryContractMissing(false);
+      return;
+    }
+
+    let isActive = true;
+
+    const validateFactory = async () => {
+      try {
+        const currentCode = await publicClient.getCode({ address: factoryAddress });
+        const hasCurrentCode = Boolean(currentCode && currentCode !== '0x');
+        if (!isActive) return;
+
+        if (hasCurrentCode) {
+          setIsFactoryContractMissing(false);
+          return;
+        }
+
+        if (
+          subgraphFactoryAddress &&
+          !sameAddress(subgraphFactoryAddress, factoryAddress)
+        ) {
+          const candidateCode = await publicClient.getCode({ address: subgraphFactoryAddress });
+          if (!isActive) return;
+
+          if (candidateCode && candidateCode !== '0x') {
+            setRouterFactoryAddress(subgraphFactoryAddress);
+            setRouterFactorySource('subgraph');
+            setIsFactoryContractMissing(false);
+            return;
+          }
+        }
+
+        setIsFactoryContractMissing(true);
+      } catch {
+        if (!isActive) return;
+        setIsFactoryContractMissing(false);
+      }
+    };
+
+    validateFactory();
+
+    return () => {
+      isActive = false;
+    };
+  }, [factoryAddress, publicClient, routerFactorySource, subgraphFactoryAddress]);
 
   useEffect(() => {
     refreshChainState().catch(() => {
@@ -1302,7 +1522,10 @@ const App = () => {
   };
 
   const approve = async () => {
-    if (!walletClient || !publicClient || !address || tokenIn.isNative || !tokenIn.address) return;
+    if (!walletClient || !publicClient || !address) return;
+
+    const approvalTokenAddress = tokenIn.isNative ? wrappedReefAddress : tokenIn.address;
+    if (!approvalTokenAddress) return;
 
     showInfoToast('Submitting approval...');
     setIsApproving(true);
@@ -1311,7 +1534,7 @@ const App = () => {
       const hash = await walletClient.writeContract({
         account: address,
         chain: reefChain,
-        address: tokenIn.address,
+        address: approvalTokenAddress,
         abi: erc20Abi,
         functionName: 'approve',
         args: [swapSpender, MAX_APPROVAL],
@@ -1442,27 +1665,32 @@ const App = () => {
         } else {
           hash = poolSwapHash;
         }
-      } else if (tokenIn.isNative) {
-        hash = await walletClient.writeContract({
-          account: address,
-          chain: reefChain,
-          address: contracts.router,
-          abi: reefswapRouterAbi,
-          functionName: 'swapExactETHForTokens',
-          args: [minOut, swapPath, address, deadline],
-          value: parsedAmountIn,
-        });
-      } else if (tokenOut.isNative) {
-        hash = await walletClient.writeContract({
-          account: address,
-          chain: reefChain,
-          address: contracts.router,
-          abi: reefswapRouterAbi,
-          functionName: 'swapExactTokensForETH',
-          args: [parsedAmountIn, minOut, swapPath, address, deadline],
-        });
       } else {
-        hash = await walletClient.writeContract({
+        let wrappedOutBalanceBefore = 0n;
+        if (tokenOut.isNative) {
+          wrappedOutBalanceBefore = await publicClient.readContract({
+            address: wrappedReefAddress,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          }).catch(() => 0n);
+        }
+
+        if (tokenIn.isNative) {
+          const wrapHash = await walletClient.writeContract({
+            account: address,
+            chain: reefChain,
+            address: wrappedReefAddress,
+            abi: wrappedReefAbi,
+            functionName: 'deposit',
+            args: [],
+            value: parsedAmountIn,
+          });
+          showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+        }
+
+        const swapHash = await walletClient.writeContract({
           account: address,
           chain: reefChain,
           address: contracts.router,
@@ -1470,6 +1698,37 @@ const App = () => {
           functionName: 'swapExactTokensForTokens',
           args: [parsedAmountIn, minOut, swapPath, address, deadline],
         });
+
+        if (tokenOut.isNative) {
+          showInfoToast(`Pool swap submitted.\nTx: ${shortAddress(swapHash)}\nWaiting for confirmation...`);
+          await publicClient.waitForTransactionReceipt({ hash: swapHash });
+
+          const wrappedOutBalanceAfter = await publicClient.readContract({
+            address: wrappedReefAddress,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          }).catch(() => wrappedOutBalanceBefore);
+
+          const unwrapAmount = wrappedOutBalanceAfter > wrappedOutBalanceBefore
+            ? wrappedOutBalanceAfter - wrappedOutBalanceBefore
+            : quotedOutRaw;
+
+          if (unwrapAmount > 0n) {
+            hash = await walletClient.writeContract({
+              account: address,
+              chain: reefChain,
+              address: wrappedReefAddress,
+              abi: wrappedReefAbi,
+              functionName: 'withdraw',
+              args: [unwrapAmount],
+            });
+          } else {
+            hash = swapHash;
+          }
+        } else {
+          hash = swapHash;
+        }
       }
 
       setLastTxHash(hash);
@@ -2111,6 +2370,10 @@ const App = () => {
               <code>{contracts.router}</code>
             </li>
             <li>
+              <span>Factory</span>
+              <code>{routerFactorySource === 'loading' ? 'Checking...' : factoryAddress}</code>
+            </li>
+            <li>
               <span>Swap Spender</span>
               <code>{swapSpender}</code>
             </li>
@@ -2121,8 +2384,17 @@ const App = () => {
           {routerWrappedTokenSource === 'subgraph' ? (
             <p className="note">Configured WrappedREEF had no contract code, switched to subgraph-indexed WrappedREEF.</p>
           ) : null}
+          {routerFactorySource === 'fallback' ? (
+            <p className="note">Router `factory()` call failed on this RPC; using configured factory fallback.</p>
+          ) : null}
+          {routerFactorySource === 'subgraph' ? (
+            <p className="note">Configured factory had no contract code, switched to subgraph-indexed factory.</p>
+          ) : null}
           {isWrappedTokenContractMissing ? (
             <p className="note">WrappedREEF address has no deployed contract code on current RPC.</p>
+          ) : null}
+          {isFactoryContractMissing ? (
+            <p className="note">Factory address has no deployed contract code on current RPC.</p>
           ) : null}
         </div>
       </Uik.Modal>
@@ -2154,11 +2426,128 @@ const App = () => {
   const isPairTokenReef = useCallback((token: { id: string; symbol: string }): boolean => (
     sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'REEF' || token.symbol.toUpperCase() === 'WREEF'
   ), [wrappedReefAddress]);
+  const positionPairIdKey = useMemo(() => (
+    subgraphPairs
+      .filter((pair) => isAddress(pair.id))
+      .map((pair) => pair.id.toLowerCase())
+      .join('|')
+  ), [subgraphPairs]);
+  const positionPairAddresses = useMemo(() => (
+    positionPairIdKey
+      ? positionPairIdKey.split('|').map((id) => ({ id, address: getAddress(id) }))
+      : []
+  ), [positionPairIdKey]);
+
+  const refreshPoolPositions = useCallback(async () => {
+    const requestId = poolPositionRequestIdRef.current + 1;
+    poolPositionRequestIdRef.current = requestId;
+
+    if (!publicClient || !address || !isConnected || !positionPairAddresses.length) {
+      if (requestId === poolPositionRequestIdRef.current) {
+        setPoolPositionBalances({});
+        setIsRefreshingPoolPositions(false);
+      }
+      return;
+    }
+
+    setIsRefreshingPoolPositions(true);
+    const nextPositions: Record<string, { balance: bigint; totalSupply: bigint }> = {};
+    const batchSize = 20;
+
+    try {
+      for (let index = 0; index < positionPairAddresses.length; index += batchSize) {
+        const chunk = positionPairAddresses.slice(index, index + batchSize);
+        const chunkResults = await Promise.all(
+          chunk.map(async ({ id, address: pairAddress }) => {
+            try {
+              const [balance, totalSupply] = await Promise.all([
+                publicClient.readContract({
+                  address: pairAddress,
+                  abi: erc20Abi,
+                  functionName: 'balanceOf',
+                  args: [address],
+                }).catch(() => 0n),
+                publicClient.readContract({
+                  address: pairAddress,
+                  abi: erc20Abi,
+                  functionName: 'totalSupply',
+                }).catch(() => 0n),
+              ]);
+              if (balance <= 0n) return null;
+              return [id, { balance, totalSupply }] as const;
+            } catch {
+              return null;
+            }
+          }),
+        );
+
+        if (requestId !== poolPositionRequestIdRef.current) {
+          return;
+        }
+
+        chunkResults.forEach((entry) => {
+          if (!entry) return;
+          const [key, value] = entry;
+          nextPositions[key] = value;
+        });
+      }
+
+      if (requestId !== poolPositionRequestIdRef.current) return;
+      setPoolPositionBalances(nextPositions);
+    } finally {
+      if (requestId === poolPositionRequestIdRef.current) {
+        setIsRefreshingPoolPositions(false);
+      }
+    }
+  }, [address, isConnected, positionPairAddresses, publicClient]);
+
+  useEffect(() => {
+    if (activeRoute !== 'pools') return;
+    refreshPoolPositions().catch(() => {
+      // no-op
+    });
+  }, [activeRoute, refreshPoolPositions]);
+
+  const userPoolPositions = useMemo<UserPoolPosition[]>(() => (
+    subgraphPairs
+      .map((pair) => {
+        const key = pair.id.toLowerCase();
+        const snapshot = poolPositionBalances[key];
+        if (!snapshot || snapshot.balance <= 0n) return null;
+
+        const token0Symbol = getPairTokenDisplaySymbol(pair.token0);
+        const token1Symbol = getPairTokenDisplaySymbol(pair.token1);
+        const lpShare = snapshot.totalSupply > 0n
+          ? Number((snapshot.balance * 1_000_000n) / snapshot.totalSupply) / 1_000_000
+          : 0;
+
+        const token0Amount = Math.max(0, asNumber(pair.reserve0) * lpShare);
+        const token1Amount = Math.max(0, asNumber(pair.reserve1) * lpShare);
+        const usdValue = Math.max(0, asNumber(pair.reserveUSD) * lpShare);
+
+        return {
+          pairId: pair.id,
+          token0Symbol,
+          token1Symbol,
+          token0IsReef: isPairTokenReef(pair.token0),
+          token1IsReef: isPairTokenReef(pair.token1),
+          lpBalance: snapshot.balance,
+          lpTotalSupply: snapshot.totalSupply,
+          lpShare,
+          usdValue,
+          token0Amount,
+          token1Amount,
+        } satisfies UserPoolPosition;
+      })
+      .filter((item): item is UserPoolPosition => Boolean(item))
+      .sort((a, b) => b.usdValue - a.usdValue)
+  ), [getPairTokenDisplaySymbol, isPairTokenReef, poolPositionBalances, subgraphPairs]);
 
   const closeNewPositionModal = useCallback(() => {
     setIsNewPositionOpen(false);
     setNewPositionAmountAText('');
     setNewPositionAmountBText('');
+    setNewPositionEditedSide(null);
   }, []);
 
   const openNewPositionModal = useCallback(() => {
@@ -2202,6 +2591,7 @@ const App = () => {
     setNewPositionTokenB(tokenB);
     setNewPositionAmountAText('');
     setNewPositionAmountBText('');
+    setNewPositionEditedSide(null);
     setIsNewPositionOpen(true);
   }, [
     newPositionTokenA,
@@ -2281,55 +2671,261 @@ const App = () => {
     showInfoToast('Submitting add liquidity...');
 
     try {
-      if (newPositionTokenA.isNative) {
-        const wrapHash = await walletClient.writeContract({
-          account: address,
-          chain: reefChain,
-          address: wrappedReefAddress,
-          abi: wrappedReefAbi,
-          functionName: 'deposit',
-          args: [],
-          value: newPositionAmountARaw,
-        });
-        showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
-        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
-      }
-
-      if (newPositionTokenB.isNative) {
-        const wrapHash = await walletClient.writeContract({
-          account: address,
-          chain: reefChain,
-          address: wrappedReefAddress,
-          abi: wrappedReefAbi,
-          functionName: 'deposit',
-          args: [],
-          value: newPositionAmountBRaw,
-        });
-        showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
-        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
-      }
-
       const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
-      const minAmountA = applySlippage(newPositionAmountARaw, parsedSlippageBps);
-      const minAmountB = applySlippage(newPositionAmountBRaw, parsedSlippageBps);
+      const zeroAddress = '0x0000000000000000000000000000000000000000';
+      const isUserRejectionError = (error: unknown): boolean => {
+        const normalizedMessage = getErrorMessage(error).toLowerCase();
+        return (
+          normalizedMessage.includes('user rejected') ||
+          normalizedMessage.includes('rejected by user') ||
+          normalizedMessage.includes('denied')
+        );
+      };
+      const ensureAllowance = async (tokenAddress: Address, amount: bigint, symbol: string) => {
+        if (amount <= 0n) return;
+        const allowance = await publicClient.readContract({
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [address, contracts.router],
+        });
+        if (allowance >= amount) return;
 
-      const hash = await walletClient.writeContract({
-        account: address,
-        chain: reefChain,
-        address: contracts.router,
-        abi: reefswapRouterAbi,
-        functionName: 'addLiquidity',
-        args: [
-          newPositionTokenAAddress,
-          newPositionTokenBAddress,
-          newPositionAmountARaw,
-          newPositionAmountBRaw,
-          minAmountA,
-          minAmountB,
-          address,
-          deadline,
-        ],
-      });
+        showInfoToast(`Approving ${symbol} for router...`);
+        const approveHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [contracts.router, MAX_APPROVAL],
+        });
+        setLastTxHash(approveHash);
+        showInfoToast(`Approval submitted.\nTx: ${shortAddress(approveHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      };
+      const ensureWrappedNative = async (nativeDesired: bigint) => {
+        const wrappedBalance = await publicClient.readContract({
+          address: wrappedReefAddress,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [address],
+        }).catch(() => 0n);
+
+        if (wrappedBalance >= nativeDesired) return;
+        const wrapAmount = nativeDesired - wrappedBalance;
+        const wrapHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: wrappedReefAddress,
+          abi: wrappedReefAbi,
+          functionName: 'deposit',
+          args: [],
+          value: wrapAmount,
+        });
+        setLastTxHash(wrapHash);
+        showInfoToast(`Wrapping REEF submitted.\nTx: ${shortAddress(wrapHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+      };
+      const resolveOrCreatePair = async (tokenAAddress: Address, tokenBAddress: Address): Promise<Address> => {
+        if (!hasFactoryCode) {
+          throw new Error(`Factory contract not found at ${factoryAddress}.`);
+        }
+
+        let pairAddress = await publicClient.readContract({
+          address: factoryAddress,
+          abi: reefswapFactoryAbi,
+          functionName: 'getPair',
+          args: [tokenAAddress, tokenBAddress],
+        });
+        let normalizedPair = getAddress(pairAddress);
+        if (!sameAddress(normalizedPair, zeroAddress)) return normalizedPair;
+
+        showInfoToast('Pair missing on factory. Creating pair...');
+        const createPairHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: factoryAddress,
+          abi: reefswapFactoryAbi,
+          functionName: 'createPair',
+          args: [tokenAAddress, tokenBAddress],
+        });
+        setLastTxHash(createPairHash);
+        showInfoToast(`Pair creation submitted.\nTx: ${shortAddress(createPairHash)}\nWaiting for confirmation...`);
+        await publicClient.waitForTransactionReceipt({ hash: createPairHash });
+
+        pairAddress = await publicClient.readContract({
+          address: factoryAddress,
+          abi: reefswapFactoryAbi,
+          functionName: 'getPair',
+          args: [tokenAAddress, tokenBAddress],
+        });
+        normalizedPair = getAddress(pairAddress);
+        if (sameAddress(normalizedPair, zeroAddress)) {
+          throw new Error('Factory returned zero pair address after createPair.');
+        }
+        return normalizedPair;
+      };
+      const addLiquidityViaPairMint = async (
+        tokenAAddress: Address,
+        tokenBAddress: Address,
+        amountA: bigint,
+        amountB: bigint,
+      ): Promise<{ hash: `0x${string}`; pairAddress: Address }> => {
+        const pairAddress = await resolveOrCreatePair(tokenAAddress, tokenBAddress);
+
+        showInfoToast('Adding liquidity via direct pair mint...');
+        const transferAHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: tokenAAddress,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairAddress, amountA],
+        });
+        setLastTxHash(transferAHash);
+        await publicClient.waitForTransactionReceipt({ hash: transferAHash });
+
+        const transferBHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: tokenBAddress,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairAddress, amountB],
+        });
+        setLastTxHash(transferBHash);
+        await publicClient.waitForTransactionReceipt({ hash: transferBHash });
+
+        const mintHash = await walletClient.writeContract({
+          account: address,
+          chain: reefChain,
+          address: pairAddress,
+          abi: reefswapPairAbi,
+          functionName: 'mint',
+          args: [address],
+        });
+        return { hash: mintHash, pairAddress };
+      };
+
+      const routerCode = await publicClient.getCode({ address: contracts.router }).catch(() => '0x');
+      const hasRouterCode = Boolean(routerCode && routerCode !== '0x');
+      const factoryCode = await publicClient.getCode({ address: factoryAddress }).catch(() => '0x');
+      const hasFactoryCode = Boolean(factoryCode && factoryCode !== '0x');
+
+      let hash: `0x${string}`;
+      let createdPairAddress: Address | null = null;
+      if (hasNewPositionNativeSide) {
+        const nativeDesired = newPositionTokenA.isNative ? newPositionAmountARaw : newPositionAmountBRaw;
+        const wrappedTokenA = newPositionTokenA.isNative ? wrappedReefAddress : newPositionTokenAAddress;
+        const wrappedTokenB = newPositionTokenB.isNative ? wrappedReefAddress : newPositionTokenBAddress;
+        if (!wrappedTokenA || !wrappedTokenB) {
+          throw new Error('Missing wrapped token addresses for native liquidity.');
+        }
+        const wrappedAmountA = newPositionTokenA.isNative ? nativeDesired : newPositionAmountARaw;
+        const wrappedAmountB = newPositionTokenB.isNative ? nativeDesired : newPositionAmountBRaw;
+
+        await ensureWrappedNative(nativeDesired);
+        await ensureAllowance(
+          wrappedTokenA,
+          wrappedAmountA,
+          newPositionTokenA.isNative ? 'REEF' : newPositionTokenASymbol,
+        );
+        await ensureAllowance(
+          wrappedTokenB,
+          wrappedAmountB,
+          newPositionTokenB.isNative ? 'REEF' : newPositionTokenBSymbol,
+        );
+
+        if (hasRouterCode) {
+          try {
+            hash = await walletClient.writeContract({
+              account: address,
+              chain: reefChain,
+              address: contracts.router,
+              abi: reefswapRouterAbi,
+              functionName: 'addLiquidity',
+              args: [
+                wrappedTokenA,
+                wrappedTokenB,
+                wrappedAmountA,
+                wrappedAmountB,
+                0n,
+                0n,
+                address,
+                deadline,
+              ],
+            });
+          } catch (wrappedRouterError) {
+            if (isUserRejectionError(wrappedRouterError)) throw wrappedRouterError;
+
+            showInfoToast('Router add failed. Falling back to direct pair mint path...');
+            const fallback = await addLiquidityViaPairMint(
+              wrappedTokenA,
+              wrappedTokenB,
+              wrappedAmountA,
+              wrappedAmountB,
+            );
+            hash = fallback.hash;
+            createdPairAddress = fallback.pairAddress;
+          }
+        } else {
+          showInfoToast('Router contract unavailable. Using direct pair mint path...');
+          const fallback = await addLiquidityViaPairMint(
+            wrappedTokenA,
+            wrappedTokenB,
+            wrappedAmountA,
+            wrappedAmountB,
+          );
+          hash = fallback.hash;
+          createdPairAddress = fallback.pairAddress;
+        }
+      } else {
+        if (hasRouterCode) {
+          await ensureAllowance(newPositionTokenAAddress, newPositionAmountARaw, newPositionTokenASymbol);
+          await ensureAllowance(newPositionTokenBAddress, newPositionAmountBRaw, newPositionTokenBSymbol);
+          try {
+            hash = await walletClient.writeContract({
+              account: address,
+              chain: reefChain,
+              address: contracts.router,
+              abi: reefswapRouterAbi,
+              functionName: 'addLiquidity',
+              args: [
+                newPositionTokenAAddress,
+                newPositionTokenBAddress,
+                newPositionAmountARaw,
+                newPositionAmountBRaw,
+                0n,
+                0n,
+                address,
+                deadline,
+              ],
+            });
+          } catch (routerAddError) {
+            if (isUserRejectionError(routerAddError)) throw routerAddError;
+            showInfoToast('Router add failed. Falling back to direct pair mint path...');
+            const fallback = await addLiquidityViaPairMint(
+              newPositionTokenAAddress,
+              newPositionTokenBAddress,
+              newPositionAmountARaw,
+              newPositionAmountBRaw,
+            );
+            hash = fallback.hash;
+            createdPairAddress = fallback.pairAddress;
+          }
+        } else {
+          showInfoToast('Router contract unavailable. Using direct pair mint path...');
+          const fallback = await addLiquidityViaPairMint(
+            newPositionTokenAAddress,
+            newPositionTokenBAddress,
+            newPositionAmountARaw,
+            newPositionAmountBRaw,
+          );
+          hash = fallback.hash;
+          createdPairAddress = fallback.pairAddress;
+        }
+      }
 
       setLastTxHash(hash);
       showInfoToast(`Liquidity add submitted.\nTx: ${shortAddress(hash)}\nWaiting for confirmation...`);
@@ -2346,15 +2942,34 @@ const App = () => {
         refetchSubgraphPairs(),
         refetchSubgraphFactory(),
       ]);
+      await refreshPoolPositions();
 
-      const pairAddress = await publicClient.readContract({
-        address: contracts.factory,
-        abi: reefswapFactoryAbi,
-        functionName: 'getPair',
-        args: [newPositionTokenAAddress, newPositionTokenBAddress],
-      });
-      const normalizedPair = getAddress(pairAddress);
-      if (!sameAddress(normalizedPair, '0x0000000000000000000000000000000000000000')) {
+      let normalizedPair: Address | null = createdPairAddress;
+      if (!normalizedPair && hasFactoryCode) {
+        try {
+          const chainPairAddress = await publicClient.readContract({
+            address: factoryAddress,
+            abi: reefswapFactoryAbi,
+            functionName: 'getPair',
+            args: [newPositionTokenAAddress, newPositionTokenBAddress],
+          });
+          normalizedPair = getAddress(chainPairAddress);
+        } catch {
+          normalizedPair = null;
+        }
+      }
+
+      if (!normalizedPair || sameAddress(normalizedPair, zeroAddress)) {
+        const subgraphMatch = subgraphPairs.find((pair) => (
+          (sameAddress(pair.token0.id, newPositionTokenAAddress) && sameAddress(pair.token1.id, newPositionTokenBAddress)) ||
+          (sameAddress(pair.token0.id, newPositionTokenBAddress) && sameAddress(pair.token1.id, newPositionTokenAAddress))
+        ));
+        if (subgraphMatch?.id && isAddress(subgraphMatch.id)) {
+          normalizedPair = getAddress(subgraphMatch.id);
+        }
+      }
+
+      if (normalizedPair && !sameAddress(normalizedPair, zeroAddress)) {
         setSelectedPoolId(normalizedPair);
         navigateRoute('pool-detail', { poolId: normalizedPair });
       }
@@ -2366,21 +2981,26 @@ const App = () => {
   }, [
     address,
     isNewPositionPairValid,
+    hasNewPositionNativeSide,
     newPositionAmountARaw,
     newPositionAmountBRaw,
     newPositionTokenA.isNative,
     newPositionTokenAAddress,
+    newPositionTokenASymbol,
     newPositionTokenB.isNative,
     newPositionTokenBAddress,
-    parsedSlippageBps,
+    newPositionTokenBSymbol,
+    factoryAddress,
     publicClient,
     refetchSubgraphFactory,
     refetchSubgraphPairs,
     refreshChainState,
+    refreshPoolPositions,
     refreshNewPositionState,
     showErrorToast,
     showInfoToast,
     showSuccessToast,
+    subgraphPairs,
     walletClient,
     wrappedReefAddress,
   ]);
@@ -2433,6 +3053,11 @@ const App = () => {
         <p className="new-position-modal__note">
           Pick two tokens and deposit liquidity. If REEF is selected, it will be wrapped automatically for the pool.
         </p>
+        {hasNewPositionRatioSource ? (
+          <p className="new-position-modal__note">
+            Existing pool detected. Enter either amount and the other token amount will auto-fill using current pool reserve ratio.
+          </p>
+        ) : null}
 
         <div className="field-grid">
           <TokenSelect
@@ -2445,7 +3070,7 @@ const App = () => {
             <span>Amount A</span>
             <input
               value={newPositionAmountAText}
-              onChange={(event) => setNewPositionAmountAText(normalizeInput(event.target.value))}
+              onChange={(event) => onNewPositionAmountAChange(event.target.value)}
               inputMode="decimal"
               placeholder="0.0"
             />
@@ -2464,7 +3089,7 @@ const App = () => {
             <span>Amount B</span>
             <input
               value={newPositionAmountBText}
-              onChange={(event) => setNewPositionAmountBText(normalizeInput(event.target.value))}
+              onChange={(event) => onNewPositionAmountBChange(event.target.value)}
               inputMode="decimal"
               placeholder="0.0"
             />
@@ -2587,9 +3212,73 @@ const App = () => {
             <div className="px-6 py-4 border-b border-[#ebe6f4]">
               <span className="text-base font-semibold text-[#1b1530]">Your Positions</span>
             </div>
-            <div className="px-6 py-10 text-center">
-              <p className="text-sm text-[#8e899c]">No liquidity positions yet. Add liquidity to start earning fees.</p>
-            </div>
+            {isRefreshingPoolPositions ? (
+              <div className="px-6 py-8 text-center text-sm text-[#8e899c]">Loading your liquidity positions...</div>
+            ) : userPoolPositions.length ? (
+              <div className="divide-y divide-[#ebe6f4]">
+                {userPoolPositions.map((position) => (
+                  <div
+                    key={position.pairId}
+                    className="px-6 py-4 flex items-center justify-between gap-4 hover:bg-[#f8f5ff] transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex -space-x-2 flex-shrink-0">
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm text-white text-sm font-semibold">
+                          {position.token0IsReef ? <Uik.ReefIcon className="h-5 w-5 text-white" /> : position.token0Symbol.slice(0, 1)}
+                        </div>
+                        <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm text-[#7a3bbd] text-sm font-semibold">
+                          {position.token1IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5 text-[#7a3bbd]" /> : position.token1Symbol.slice(0, 1)}
+                        </div>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[#1b1530] truncate">
+                          {position.token0Symbol} / {position.token1Symbol}
+                        </p>
+                        <p className="text-xs text-[#8e899c] truncate">
+                          LP {formatDisplayAmount(position.lpBalance, 18, 4)} • Share {(position.lpShare * 100).toFixed(2)}%
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-semibold text-[#1b1530]">{formatUsd(position.usdValue)}</p>
+                      <p className="text-xs text-[#8e899c]">
+                        {formatPositionAmount(position.token0Amount)} {position.token0Symbol}
+                        {' / '}
+                        {formatPositionAmount(position.token1Amount)} {position.token1Symbol}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPoolId(position.pairId);
+                          navigateRoute('pool-detail', { poolId: position.pairId });
+                        }}
+                        className="rounded-xl bg-[#f1edf8] text-[#7a3bbd] text-xs font-semibold px-3 py-1.5 hover:bg-[#e6dff5] transition-all"
+                      >
+                        View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPoolId(position.pairId);
+                          navigateRoute('pool-detail', { poolId: position.pairId });
+                        }}
+                        className="rounded-xl bg-gradient-to-r from-[#a93185] to-[#5d3bad] text-white text-xs font-semibold px-3 py-1.5 hover:brightness-110 transition-all"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-6 py-10 text-center">
+                <p className="text-sm text-[#8e899c]">No liquidity positions yet. Add liquidity to start earning fees.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2734,7 +3423,7 @@ const App = () => {
     </div>
   );
 
-  const chartRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} />;
+  const chartRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} mode="chart" />;
   const poolDetailRouteView = <PoolDetailPage pair={selectedPool} wrappedTokenAddress={wrappedReefAddress} />;
 
   return (

@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import { CheckCircle2, XCircle } from 'lucide-react';
-import { useAccount, usePublicClient, useWalletClient } from 'wagmi';
-import { getAddress, parseUnits, type Address, type Hex } from 'viem';
+import { BigNumber, ContractFactory, providers } from 'ethers';
+import { useAccount } from 'wagmi';
+import { getAddress, parseUnits, type Address } from 'viem';
 import './creator.css';
 import IconUpload from './IconUpload';
 import ConfirmToken from './ConfirmToken';
@@ -10,6 +11,7 @@ import { reefChain } from '../../../lib/config';
 import type { TokenOption } from '../../../lib/tokens';
 import { getErrorMessage, shortAddress } from '../../../lib/utils';
 import { deployTokens, type DeployContractData } from './tokensDeployData';
+import { polkaVmSimpleTokenDeployData } from './polkaVmSimpleTokenDeployData';
 
 type CreatorPageProps = {
   onTokenCreated?: (token: TokenOption) => void;
@@ -21,7 +23,7 @@ type ResultMessage = {
   title: string;
   message: string;
   contractAddress?: Address;
-  txHash?: Address;
+  txHash?: string;
 };
 
 const selectDeployData = (burnable: boolean, mintable: boolean): DeployContractData => {
@@ -31,10 +33,13 @@ const selectDeployData = (burnable: boolean, mintable: boolean): DeployContractD
   return deployTokens.mintBurn;
 };
 
+const isCodeRejectedError = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return normalized.includes('coderejected') || normalized.includes('failed to instantiate contract');
+};
+
 const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.Element => {
   const { address, chainId } = useAccount();
-  const publicClient = usePublicClient({ chainId: reefChain.id });
-  const { data: walletClient } = useWalletClient({ chainId: reefChain.id });
 
   const [tokenName, setTokenName] = useState('');
   const [symbol, setSymbol] = useState('');
@@ -44,6 +49,7 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
   const [icon, setIcon] = useState('');
   const [isConfirmOpen, setConfirmOpen] = useState(false);
   const [resultMessage, setResultMessage] = useState<ResultMessage | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
 
   const validationMsg = useMemo(() => {
     if (!tokenName.trim()) return 'Set token name';
@@ -74,9 +80,9 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
   };
 
   const handleConfirm = async () => {
-    if (validationMsg) return;
-    if (!address || !walletClient || !publicClient) {
-      Uik.notify.danger({ message: 'Wallet is not connected to Reef chain RPC.' });
+    if (validationMsg || isCreating) return;
+    if (!address) {
+      Uik.notify.danger({ message: 'Wallet is not connected.' });
       return;
     }
     if (chainId !== reefChain.id) {
@@ -87,6 +93,8 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
     const safeName = tokenName.trim();
     const safeSymbol = symbol.trim().toUpperCase();
     const deployData = selectDeployData(burnable, mintable);
+    setIsCreating(true);
+    setConfirmOpen(false);
 
     setResultMessage({
       complete: false,
@@ -95,13 +103,97 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
     });
 
     try {
-      const hash = await walletClient.deployContract({
-        account: address,
-        chain: reefChain,
-        abi: deployData.metadata.output.abi,
-        bytecode: `0x${deployData.bytecode.object}` as Hex,
-        args: [safeName, safeSymbol, parseUnits(initialSupply, 18)],
-      });
+      const deployArgs = [safeName, safeSymbol, parseUnits(initialSupply, 18)] as const;
+      const defaultDeployBytecode = `0x${deployData.bytecode.object}`;
+      const ethereumProvider = (window as Window & { ethereum?: providers.ExternalProvider }).ethereum;
+      if (!ethereumProvider) {
+        throw new Error('MetaMask extension not found in browser.');
+      }
+
+      // Match reef-app flow: use ethers ContractFactory with injected signer.
+      const provider = new providers.Web3Provider(ethereumProvider);
+      await provider.send('eth_requestAccounts', []);
+      const signer = provider.getSigner(address);
+      const signerAddress = getAddress(await signer.getAddress());
+
+      if (signerAddress.toLowerCase() !== address.toLowerCase()) {
+        throw new Error(`Connected wallet mismatch. Expected ${address}, got ${signerAddress}.`);
+      }
+
+      const submitDeploy = async (factory: ContractFactory) => {
+        try {
+          return await factory.deploy(...deployArgs);
+        } catch (error) {
+          const normalizedMessage = getErrorMessage(error).toLowerCase();
+          const shouldRetryWithOverrides = (
+            normalizedMessage.includes('temporarily banned') ||
+            normalizedMessage.includes('invalid transaction') ||
+            normalizedMessage.includes('could not estimate gas')
+          );
+          if (!shouldRetryWithOverrides) throw error;
+
+          const deployTxRequest = factory.getDeployTransaction(...deployArgs);
+          let gasLimit = BigNumber.from(4_000_000);
+          try {
+            const estimatedGas = await signer.estimateGas(deployTxRequest);
+            gasLimit = estimatedGas.mul(12).div(10);
+          } catch {
+            gasLimit = BigNumber.from(4_000_000);
+          }
+
+          let fallbackGasPrice = BigNumber.from(1_000_000_000);
+          try {
+            const rpcGasPrice = await provider.getGasPrice();
+            if (rpcGasPrice.gt(0)) fallbackGasPrice = rpcGasPrice;
+          } catch {
+            fallbackGasPrice = BigNumber.from(1_000_000_000);
+          }
+          const nonce = await provider.getTransactionCount(signerAddress, 'pending');
+
+          return factory.deploy(...deployArgs, {
+            gasLimit,
+            gasPrice: fallbackGasPrice,
+            nonce,
+          });
+        }
+      };
+
+      const defaultFactory = new ContractFactory(
+        deployData.metadata.output.abi,
+        defaultDeployBytecode,
+        signer,
+      );
+
+      let fallbackDeployUsed = false;
+      let contract;
+      try {
+        contract = await submitDeploy(defaultFactory);
+      } catch (error) {
+        const message = getErrorMessage(error);
+        if (!isCodeRejectedError(message)) {
+          throw error;
+        }
+
+        fallbackDeployUsed = true;
+        setResultMessage({
+          complete: false,
+          title: 'Deploying token',
+          message: 'Local node rejected standard bytecode. Retrying with PolkaVM-compatible token bytecode.',
+        });
+
+        const fallbackFactory = new ContractFactory(
+          polkaVmSimpleTokenDeployData.abi,
+          polkaVmSimpleTokenDeployData.bytecode,
+          signer,
+        );
+        contract = await submitDeploy(fallbackFactory);
+      }
+
+      const deploymentTx = (contract as any).deploymentTransaction?.() ?? (contract as any).deployTransaction;
+      if (!deploymentTx?.hash) {
+        throw new Error('Token deployment transaction hash not found.');
+      }
+      const hash = deploymentTx.hash;
 
       setResultMessage({
         complete: false,
@@ -110,8 +202,8 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
         txHash: hash,
       });
 
-      const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      const createdAddress = receipt.contractAddress ? getAddress(receipt.contractAddress) : null;
+      const receipt = await deploymentTx.wait();
+      const createdAddress = receipt?.contractAddress ? getAddress(receipt.contractAddress) : null;
       if (!createdAddress) {
         throw new Error('Token deployment confirmed but contract address was not returned.');
       }
@@ -129,19 +221,24 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
       setResultMessage({
         complete: true,
         title: 'Token created',
-        message: `Success, ${safeName} (${safeSymbol}) deployed with initial supply ${initialSupply}.`,
+        message: `Success, ${safeName} (${safeSymbol}) deployed with initial supply ${initialSupply}.${fallbackDeployUsed ? ' Mint/burn toggles are unavailable on this local node bytecode.' : ''}`,
         contractAddress: createdAddress,
         txHash: hash,
       });
       Uik.notify.success({ message: `Token created at ${shortAddress(createdAddress)}` });
     } catch (error) {
       const message = getErrorMessage(error);
+      const helpSuffix = message.toLowerCase().includes('temporarily banned')
+        ? ' Wait 10-15 seconds and retry.'
+        : '';
       setResultMessage({
         complete: true,
         title: 'Error creating token',
-        message,
+        message: `${message}${helpSuffix}`,
       });
-      Uik.notify.danger({ message });
+      Uik.notify.danger({ message: `${message}${helpSuffix}` });
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -254,7 +351,7 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
 
             <Uik.Button
               className="creator__submit"
-              disabled={!!validationMsg}
+              disabled={!!validationMsg || isCreating}
               text="Create Token"
               fill={!validationMsg}
               size="large"
@@ -310,8 +407,11 @@ const CreatorPage = ({ onTokenCreated, onCreatePool }: CreatorPageProps): JSX.El
         isMintable={mintable}
         isOpen={isConfirmOpen}
         icon={icon}
-        onClose={() => setConfirmOpen(false)}
+        onClose={() => {
+          if (!isCreating) setConfirmOpen(false);
+        }}
         onConfirm={handleConfirm}
+        isSubmitting={isCreating}
       />
     </>
   );

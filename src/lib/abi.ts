@@ -93,6 +93,13 @@ export const reefswapRouterAbi = [
   },
   {
     type: 'function',
+    name: 'factory',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+  {
+    type: 'function',
     name: 'getAmountsOut',
     stateMutability: 'view',
     inputs: [
@@ -161,6 +168,24 @@ export const reefswapRouterAbi = [
   },
   {
     type: 'function',
+    name: 'addLiquidityETH',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'token', type: 'address' },
+      { name: 'amountTokenDesired', type: 'uint256' },
+      { name: 'amountTokenMin', type: 'uint256' },
+      { name: 'amountETHMin', type: 'uint256' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [
+      { name: 'amountToken', type: 'uint256' },
+      { name: 'amountETH', type: 'uint256' },
+      { name: 'liquidity', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'function',
     name: 'removeLiquidity',
     stateMutability: 'nonpayable',
     inputs: [
@@ -180,6 +205,16 @@ export const reefswapRouterAbi = [
 ] as const;
 
 export const reefswapFactoryAbi = [
+  {
+    type: 'function',
+    name: 'createPair',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'tokenA', type: 'address' },
+      { name: 'tokenB', type: 'address' },
+    ],
+    outputs: [{ name: 'pair', type: 'address' }],
+  },
   {
     type: 'function',
     name: 'getPair',
@@ -218,5 +253,12 @@ export const reefswapPairAbi = [
       { name: 'data', type: 'bytes' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'mint',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'to', type: 'address' }],
+    outputs: [{ name: 'liquidity', type: 'uint256' }],
   },
 ] as const;

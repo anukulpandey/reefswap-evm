@@ -330,6 +330,24 @@
   animation: pool-content-appear 0.4s;
 }
 
+.pool--chart-only {
+  background-color: transparent;
+  padding-top: 20px;
+}
+
+.pool__content.pool__content--chart-only {
+  margin-top: 0;
+  max-width: 1460px;
+  padding-bottom: 24px;
+}
+
+.pool-chart.pool-chart--chart-only {
+  width: 100%;
+  max-width: 100%;
+  margin-right: 0;
+  padding-bottom: 0;
+}
+
 @keyframes pool-content-appear {
   from {
     transform: translateY(-8px);
@@ -591,6 +609,146 @@
   font-weight: 600;
 }
 
+.pool-transactions-modal {
+  padding: 0 !important;
+  max-width: unset !important;
+  margin: 0 !important;
+}
+
+.pool-transactions-modal .uik-modal__container .uik-modal__popup {
+  width: min(1100px, calc(100vw - 32px)) !important;
+  background-color: #eeebf6 !important;
+}
+
+.pool-transactions-modal .uik-modal__container .uik-modal__popup .uik-modal__head {
+  padding-bottom: 18px !important;
+}
+
+.pool-transactions-modal__content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pool-transactions-modal__meta {
+  color: #7c7890;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.pool-transactions-modal__status {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8b8799;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid #d5cde1;
+  background: #f3f1f8;
+}
+
+.pool-transactions-modal__table-wrap {
+  max-height: 520px;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid #d5cde1;
+  background: #f3f1f8;
+}
+
+.pool-transactions-modal__table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.pool-transactions-modal__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #7f7a92;
+  letter-spacing: 0.02em;
+  background: #ece7f5;
+  padding: 12px 16px;
+  border-bottom: 1px solid #dad3e5;
+}
+
+.pool-transactions-modal__table thead th:last-child,
+.pool-transactions-modal__table thead th:nth-last-child(2) {
+  text-align: right;
+}
+
+.pool-transactions-modal__table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.pool-transactions-modal__table tbody tr:hover {
+  background: rgba(165, 40, 171, 0.08);
+}
+
+.pool-transactions-modal__table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e0dae8;
+  color: #2e3450;
+  font-size: 0.9rem;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.pool-transactions-modal__table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.pool-transactions-modal__amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pool-transactions-modal__type {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pool-transactions-modal__type-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.pool-transactions-modal__type-icon--trade {
+  color: #34b27c;
+}
+
+.pool-transactions-modal__type-icon--stake {
+  color: #9f33be;
+}
+
+.pool-transactions-modal__type-icon--unstake {
+  color: #8581a0;
+}
+
+.pool-transactions-modal__tx-link {
+  border: none;
+  background: transparent;
+  color: #8f3bbf;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 0;
+}
+
+.pool-transactions-modal__tx-link:hover {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 @media (max-width: 1600px) {
   .pool-stats__wrapper {
     padding: 0 18px;
@@ -635,6 +793,10 @@
 
   .pool__content {
     flex-direction: column;
+  }
+
+  .pool__content.pool__content--chart-only {
+    padding: 0 18px 0.95rem;
   }
 
   .pool-actions,
@@ -692,6 +854,11 @@
     margin-top: -0.65rem;
   }
 
+  .pool__content.pool__content--chart-only {
+    margin-top: 0;
+    padding-top: 0;
+  }
+
   .pool-chart {
     padding-bottom: 25px;
     max-width: none;
@@ -711,5 +878,9 @@
   .pool-detail-chart__summary {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .pool-transactions-modal .uik-modal__container .uik-modal__popup {
+    width: calc(100vw - 20px) !important;
   }
 }
