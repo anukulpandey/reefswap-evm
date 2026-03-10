@@ -25,6 +25,7 @@ import PoolDetailPage from './components/reef/PoolDetailPage';
 import { useReefBalance } from './hooks/useReefBalance';
 import { useReefPrice } from './hooks/useReefPrice';
 import { useSubgraphFactory, useSubgraphPairs, useSubgraphTokens } from './hooks/useSubgraph';
+import { type SubgraphPair } from './lib/subgraph';
 
 const MAX_APPROVAL = (2n ** 256n) - 1n;
 const DEFAULT_SLIPPAGE = '1.0';
@@ -55,7 +56,7 @@ const NAV_ROUTES: { route: AppRoute; label: string; path: string }[] = [
   { route: 'pools', label: 'Pools', path: '/pools' },
   { route: 'create-token', label: 'Creator', path: '/create-token' },
   { route: 'chart', label: 'Chart', path: '/chart' },
-  { route: 'pool-detail', label: 'Pool Detail', path: '/pool/reef-flpr' },
+  { route: 'pool-detail', label: 'Pool Detail', path: '/pool' },
 ];
 
 const ROUTE_ALIAS: Record<string, AppRoute> = {
@@ -71,21 +72,59 @@ const ROUTE_ALIAS: Record<string, AppRoute> = {
   'pool-detail': 'pool-detail',
 };
 
-const normalizeRouteSegment = (value: string | null | undefined): string =>
-  (value || '').replace(/^#\/?/, '').replace(/^\/+/, '').split('/')[0].trim().toLowerCase();
+const normalizePathSegments = (value: string | null | undefined): string[] =>
+  (value || '')
+    .replace(/^#\/?/, '')
+    .replace(/^\/+/, '')
+    .split('/')
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+
+const parseRouteLocation = (location: Pick<Location, 'pathname' | 'hash'>): {
+  route: AppRoute;
+  poolRef: string | null;
+} => {
+  const hashSegments = normalizePathSegments(location.hash);
+  const pathSegments = normalizePathSegments(location.pathname);
+  const segments = hashSegments.length ? hashSegments : pathSegments;
+  const routeSegment = segments[0] || '';
+  const route = ROUTE_ALIAS[routeSegment] || 'tokens';
+  const poolRef = route === 'pool-detail' && segments[1] ? decodeURIComponent(segments[1]) : null;
+  return { route, poolRef };
+};
 
 const resolveRoute = (value: string | null | undefined): AppRoute => {
-  const segment = normalizeRouteSegment(value);
+  const segment = normalizePathSegments(value)[0] || '';
   return ROUTE_ALIAS[segment] || 'tokens';
 };
 
 const resolveRouteFromLocation = (location: Pick<Location, 'pathname' | 'hash'>): AppRoute => {
-  const hashSegment = normalizeRouteSegment(location.hash);
-  if (hashSegment) return resolveRoute(hashSegment);
-  return resolveRoute(location.pathname);
+  return parseRouteLocation(location).route;
 };
 
-const routePath = (route: AppRoute): string => NAV_ROUTES.find((item) => item.route === route)?.path || '/';
+const resolvePoolIdFromRef = (poolRef: string | null | undefined, pairs: SubgraphPair[]): string | null => {
+  if (!poolRef) return null;
+  const normalizedRef = poolRef.toLowerCase();
+
+  const byId = pairs.find((pair) => pair.id.toLowerCase() === normalizedRef);
+  if (byId) return byId.id;
+
+  const bySymbolSlug = pairs.find((pair) => `${pair.token0.symbol}-${pair.token1.symbol}`.toLowerCase() === normalizedRef);
+  if (bySymbolSlug) return bySymbolSlug.id;
+
+  const byReverseSymbolSlug = pairs.find((pair) => `${pair.token1.symbol}-${pair.token0.symbol}`.toLowerCase() === normalizedRef);
+  if (byReverseSymbolSlug) return byReverseSymbolSlug.id;
+
+  return null;
+};
+
+const routePath = (route: AppRoute, poolId?: string | null): string => {
+  if (route === 'pool-detail') {
+    const normalizedPoolId = String(poolId || '').trim().toLowerCase();
+    return normalizedPoolId ? `/pool/${encodeURIComponent(normalizedPoolId)}` : '/pool';
+  }
+  return NAV_ROUTES.find((item) => item.route === route)?.path || '/';
+};
 
 const trimDecimalString = (value: string): string => {
   if (!value.includes('.')) return value;
@@ -231,7 +270,10 @@ const App = () => {
     if (typeof window === 'undefined') return 'tokens';
     return resolveRouteFromLocation(window.location);
   });
-  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
+  const [selectedPoolId, setSelectedPoolId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return parseRouteLocation(window.location).poolRef;
+  });
   const [connectionInfoOpen, setConnectionInfoOpen] = useState(false);
 
   const {
@@ -307,9 +349,14 @@ const App = () => {
     }
 
     setSelectedPoolId((current) => {
-      if (!current) return subgraphPairs[0].id;
-      const exists = subgraphPairs.some((pair) => pair.id.toLowerCase() === current.toLowerCase());
-      return exists ? current : subgraphPairs[0].id;
+      const poolRefFromLocation = typeof window === 'undefined' ? null : parseRouteLocation(window.location).poolRef;
+      const resolvedFromLocation = resolvePoolIdFromRef(poolRefFromLocation, subgraphPairs);
+      if (resolvedFromLocation) return resolvedFromLocation;
+
+      const resolvedCurrent = resolvePoolIdFromRef(current, subgraphPairs);
+      if (resolvedCurrent) return resolvedCurrent;
+
+      return subgraphPairs[0].id;
     });
   }, [subgraphPairs]);
 
@@ -681,7 +728,11 @@ const App = () => {
 
   useEffect(() => {
     const syncFromLocation = () => {
-      setActiveRoute(resolveRouteFromLocation(window.location));
+      const { route, poolRef } = parseRouteLocation(window.location);
+      setActiveRoute(route);
+      if (route === 'pool-detail') {
+        setSelectedPoolId(poolRef);
+      }
     };
 
     window.addEventListener('popstate', syncFromLocation);
@@ -692,13 +743,27 @@ const App = () => {
     };
   }, []);
 
-  const navigateRoute = (route: AppRoute) => {
-    const nextPath = routePath(route);
+  const navigateRoute = (route: AppRoute, options?: { poolId?: string | null }) => {
+    const poolId = route === 'pool-detail' ? (options?.poolId || selectedPoolId) : undefined;
+    const nextPath = routePath(route, poolId);
+    if (route === 'pool-detail' && poolId) {
+      setSelectedPoolId(poolId);
+    }
     setActiveRoute(route);
     if (window.location.pathname !== nextPath || window.location.hash) {
       window.history.pushState(null, '', nextPath);
     }
   };
+
+  useEffect(() => {
+    if (activeRoute !== 'pool-detail' || !selectedPoolId) return;
+
+    const normalizedPoolId = selectedPoolId.toLowerCase();
+    const expectedPath = routePath('pool-detail', normalizedPoolId);
+    if (window.location.pathname !== expectedPath || window.location.hash) {
+      window.history.replaceState(null, '', expectedPath);
+    }
+  }, [activeRoute, selectedPoolId]);
 
   const connectWallet = async () => {
     const connector = connectors.find((item) => item.id === 'metaMask') || connectors[0];
@@ -1428,14 +1493,12 @@ const App = () => {
                   role="button"
                   tabIndex={0}
                   onClick={() => {
-                    setSelectedPoolId(pair.id);
-                    navigateRoute('pool-detail');
+                    navigateRoute('pool-detail', { poolId: pair.id });
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
-                      setSelectedPoolId(pair.id);
-                      navigateRoute('pool-detail');
+                      navigateRoute('pool-detail', { poolId: pair.id });
                     }
                   }}
                 >
@@ -1575,8 +1638,7 @@ const App = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setSelectedPoolId(pool.id);
-                      navigateRoute('pool-detail');
+                      navigateRoute('pool-detail', { poolId: pool.id });
                     }}
                     className="inline-flex items-center gap-1.5 rounded-[12px] bg-gradient-to-r from-[#a93185] to-[#5d3bad] px-3.5 py-1.5 text-[0.88rem] font-semibold text-white shadow-sm hover:brightness-110"
                   >

@@ -1,8 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import { ArrowLeftRight } from 'lucide-react';
 import { faArrowsRotate, faRightLeft } from '@fortawesome/free-solid-svg-icons';
-import { type SubgraphPair } from '@/lib/subgraph';
+import {
+  AreaSeries,
+  HistogramSeries,
+  createChart,
+  type IChartApi,
+  type UTCTimestamp,
+} from 'lightweight-charts';
+import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 import './pool-detail.css';
@@ -15,9 +22,38 @@ type PoolDetailPageProps = {
   pair: SubgraphPair | null;
 };
 
+type ChartPoint = {
+  time: number;
+  value: number;
+};
+
+type AggregationMode = 'last' | 'sum';
+
+const CHART_SAMPLE_SIZE = 500;
+const SWAP_FEE_RATE = 0.003;
+
+const TIMEFRAME_LOOKBACK_SECONDS: Record<Timeframe, number> = {
+  '1h': 60 * 60,
+  '1D': 24 * 60 * 60,
+  '1W': 7 * 24 * 60 * 60,
+  '1M': 30 * 24 * 60 * 60,
+};
+
+const TIMEFRAME_BUCKET_SECONDS: Record<Timeframe, number> = {
+  '1h': 2 * 60,
+  '1D': 15 * 60,
+  '1W': 2 * 60 * 60,
+  '1M': 6 * 60 * 60,
+};
+
 const asNumber = (value: string | number | null | undefined): number => {
   const parsed = Number.parseFloat(String(value ?? '0'));
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const asTimestamp = (value: string | number | null | undefined): number => {
+  const timestamp = Math.trunc(asNumber(value));
+  return timestamp > 0 ? timestamp : 0;
 };
 
 const formatUsd = (value: string | number | null | undefined): string => (
@@ -43,11 +79,193 @@ const formatRate = (value: string | number | null | undefined): string => (
   }).format(asNumber(value))
 );
 
+const formatCompact = (value: string | number | null | undefined): string => (
+  new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(asNumber(value))
+);
+
+const deriveSwapPrice = (swap: SubgraphSwap): number => {
+  const token0Delta = Math.max(asNumber(swap.amount0In), asNumber(swap.amount0Out));
+  const token1Delta = Math.max(asNumber(swap.amount1In), asNumber(swap.amount1Out));
+  if (token0Delta <= 0 || token1Delta <= 0) return 0;
+  return token1Delta / token0Delta;
+};
+
+const aggregatePointsByBucket = (points: ChartPoint[], bucketSeconds: number, mode: AggregationMode): ChartPoint[] => {
+  if (!points.length) return [];
+
+  const buckets = new Map<number, { last: number; sum: number }>();
+  for (const point of points) {
+    const bucketTime = Math.trunc(point.time / bucketSeconds) * bucketSeconds;
+    const previous = buckets.get(bucketTime);
+    if (!previous) {
+      buckets.set(bucketTime, { last: point.value, sum: point.value });
+      continue;
+    }
+    previous.last = point.value;
+    previous.sum += point.value;
+  }
+
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, values]) => ({ time, value: mode === 'sum' ? values.sum : values.last }));
+};
+
+const slicePointsForTimeframe = (
+  points: ChartPoint[],
+  timeframe: Timeframe,
+  preserveContinuity: boolean,
+): ChartPoint[] => {
+  if (!points.length) return [];
+
+  const lookback = TIMEFRAME_LOOKBACK_SECONDS[timeframe];
+  const latestTime = points[points.length - 1]?.time ?? Math.trunc(Date.now() / 1000);
+  const endTime = Math.max(Math.trunc(Date.now() / 1000), latestTime);
+  const startTime = endTime - lookback;
+
+  const inRange = points.filter((point) => point.time >= startTime && point.time <= endTime);
+  if (!preserveContinuity) return inRange;
+
+  const withContinuity = [...inRange];
+  const previousPoint = [...points].reverse().find((point) => point.time < startTime);
+  if (previousPoint && (withContinuity.length === 0 || withContinuity[0].time > startTime)) {
+    withContinuity.unshift({ time: startTime, value: previousPoint.value });
+  }
+
+  if (!withContinuity.length) {
+    const fallbackValue = points[points.length - 1]?.value ?? 0;
+    return [
+      { time: startTime, value: fallbackValue },
+      { time: endTime, value: fallbackValue },
+    ];
+  }
+
+  const lastValue = withContinuity[withContinuity.length - 1]?.value ?? 0;
+  if (withContinuity[withContinuity.length - 1]?.time < endTime) {
+    withContinuity.push({ time: endTime, value: lastValue });
+  }
+  return withContinuity;
+};
+
+const formatChartValue = (
+  tab: ChartTab,
+  value: number,
+  token0Symbol: string,
+  token1Symbol: string,
+): string => {
+  if (tab === 'price') return `${formatRate(value)} ${token1Symbol} / ${token0Symbol}`;
+  return formatUsd(value);
+};
+
+const tabLabelByValue: Record<ChartTab, string> = {
+  price: 'Price',
+  liquidity: 'Liquidity',
+  volume: 'Volume',
+  fees: 'Fees',
+};
+
+type PoolSeriesChartProps = {
+  points: ChartPoint[];
+  chartTab: ChartTab;
+  timeframe: Timeframe;
+};
+
+const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps): JSX.Element => {
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+
+  useEffect(() => {
+    if (!chartContainerRef.current || !points.length) return;
+
+    const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth,
+      height: 500,
+      layout: {
+        background: { type: 'solid', color: '#ece9f4' },
+        textColor: '#8e899c',
+        fontSize: 15,
+      },
+      grid: {
+        vertLines: { color: '#d4ccdf' },
+        horzLines: { color: '#d4ccdf' },
+      },
+      crosshair: {
+        vertLine: { color: '#ab36bf', labelBackgroundColor: '#ab36bf' },
+        horzLine: { color: '#ab36bf', labelBackgroundColor: '#ab36bf' },
+      },
+      rightPriceScale: {
+        borderColor: '#d4ccdf',
+      },
+      timeScale: {
+        borderColor: '#d4ccdf',
+        timeVisible: timeframe === '1h' || timeframe === '1D',
+        secondsVisible: timeframe === '1h',
+      },
+    });
+    chartRef.current = chart;
+
+    const seriesData = points.map((point) => ({
+      time: point.time as UTCTimestamp,
+      value: point.value,
+    }));
+
+    if (chartTab === 'volume' || chartTab === 'fees') {
+      const histogramSeries = chart.addSeries(HistogramSeries, {
+        color: chartTab === 'fees' ? '#d248a3' : '#7f44bf',
+        priceFormat: { type: 'volume' },
+        priceLineVisible: false,
+      });
+      histogramSeries.setData(seriesData.map((item, index) => {
+        const previous = seriesData[index - 1];
+        const isDown = Boolean(previous) && item.value < previous.value;
+        return {
+          ...item,
+          color: isDown
+            ? (chartTab === 'fees' ? '#c43d9a' : '#6a3ab3')
+            : (chartTab === 'fees' ? '#e45db7' : '#9f63d7'),
+        };
+      }));
+    } else {
+      const areaSeries = chart.addSeries(AreaSeries, {
+        lineColor: '#ac35c1',
+        lineWidth: 3,
+        topColor: 'rgba(172, 53, 193, 0.35)',
+        bottomColor: 'rgba(172, 53, 193, 0.04)',
+        priceLineVisible: true,
+      });
+      areaSeries.setData(seriesData);
+    }
+
+    chart.timeScale().fitContent();
+
+    const resizeObserver = new ResizeObserver(() => {
+      if (!chartContainerRef.current || !chartRef.current) return;
+      chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+    });
+    resizeObserver.observe(chartContainerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, [chartTab, timeframe, points]);
+
+  return <div className="pool-detail-chart__canvas" ref={chartContainerRef} />;
+};
+
 const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
-  const { data: pairTransactions } = useSubgraphPairTransactions(pair?.id, 20);
+  const {
+    data: pairTransactions,
+    isLoading: isChartLoading,
+    isError: hasChartError,
+  } = useSubgraphPairTransactions(pair?.id, CHART_SAMPLE_SIZE);
 
   const token0Symbol = pair?.token0.symbol || 'REEF';
   const token1Symbol = pair?.token1.symbol || 'TOKEN';
@@ -60,11 +278,6 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
   const reserveTotal = reserve0 + reserve1;
   const token0Weight = reserveTotal > 0 ? (reserve0 / reserveTotal) * 100 : 0;
   const token1Weight = reserveTotal > 0 ? (reserve1 / reserveTotal) * 100 : 0;
-
-  const yAxisLabels = useMemo(() => {
-    const marker = `${formatRate(pair?.token0Price || 0)} ${token1Symbol}`;
-    return Array.from({ length: 12 }, () => marker);
-  }, [pair?.token0Price, token1Symbol]);
 
   const poolStatsTokens = [
     {
@@ -89,6 +302,109 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
 
   const totalTransactions = (pairTransactions?.swaps.length || 0) + (pairTransactions?.mints.length || 0) + (pairTransactions?.burns.length || 0);
   const txSummaryText = 'Show Transactions';
+
+  const chartPoints = useMemo<ChartPoint[]>(() => {
+    if (!pair) return [];
+
+    const reserveUsd = asNumber(pair.reserveUSD);
+    const swaps = (pairTransactions?.swaps || [])
+      .map((swap) => ({
+        timestamp: asTimestamp(swap.timestamp),
+        amountUsd: asNumber(swap.amountUSD),
+        price: deriveSwapPrice(swap),
+      }))
+      .filter((swap) => swap.timestamp > 0)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const mints = (pairTransactions?.mints || [])
+      .map((mint) => ({
+        timestamp: asTimestamp(mint.timestamp),
+        amountUsd: Math.abs(asNumber(mint.amountUSD)),
+      }))
+      .filter((mint) => mint.timestamp > 0)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const burns = (pairTransactions?.burns || [])
+      .map((burn) => ({
+        timestamp: asTimestamp(burn.timestamp),
+        amountUsd: Math.abs(asNumber(burn.amountUSD)),
+      }))
+      .filter((burn) => burn.timestamp > 0)
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    const now = Math.trunc(Date.now() / 1000);
+    let rawPoints: ChartPoint[] = [];
+    let aggregationMode: AggregationMode = 'last';
+    let preserveContinuity = true;
+
+    if (chartTab === 'price') {
+      rawPoints = swaps
+        .filter((swap) => swap.price > 0)
+        .map((swap) => ({ time: swap.timestamp, value: swap.price }));
+      if (!rawPoints.length) {
+        rawPoints = [{ time: now, value: asNumber(pair.token0Price) }];
+      }
+    } else if (chartTab === 'volume') {
+      aggregationMode = 'sum';
+      preserveContinuity = false;
+      rawPoints = swaps
+        .filter((swap) => swap.amountUsd > 0)
+        .map((swap) => ({ time: swap.timestamp, value: swap.amountUsd }));
+      if (!rawPoints.length) {
+        rawPoints = [{ time: now, value: 0 }];
+      }
+    } else if (chartTab === 'fees') {
+      aggregationMode = 'sum';
+      preserveContinuity = false;
+      rawPoints = swaps
+        .filter((swap) => swap.amountUsd > 0)
+        .map((swap) => ({ time: swap.timestamp, value: swap.amountUsd * SWAP_FEE_RATE }));
+      if (!rawPoints.length) {
+        rawPoints = [{ time: now, value: 0 }];
+      }
+    } else {
+      const liquidityDeltas = [
+        ...mints.map((mint) => ({ time: mint.timestamp, delta: mint.amountUsd })),
+        ...burns.map((burn) => ({ time: burn.timestamp, delta: -burn.amountUsd })),
+      ].sort((a, b) => a.time - b.time);
+      const totalDelta = liquidityDeltas.reduce((accumulator, event) => accumulator + event.delta, 0);
+      let runningLiquidity = Math.max(reserveUsd - totalDelta, 0);
+
+      rawPoints = liquidityDeltas.map((event) => {
+        runningLiquidity = Math.max(runningLiquidity + event.delta, 0);
+        return { time: event.time, value: runningLiquidity };
+      });
+
+      if (!rawPoints.length) {
+        rawPoints = [{ time: now, value: reserveUsd }];
+      } else if (rawPoints[rawPoints.length - 1]?.time < now) {
+        rawPoints.push({ time: now, value: runningLiquidity });
+      }
+    }
+
+    const timeframePoints = slicePointsForTimeframe(rawPoints, timeframe, preserveContinuity);
+    const bucketedPoints = aggregatePointsByBucket(
+      timeframePoints,
+      TIMEFRAME_BUCKET_SECONDS[timeframe],
+      aggregationMode,
+    );
+
+    if (bucketedPoints.length >= 2) return bucketedPoints;
+    if (bucketedPoints.length === 1) {
+      return [
+        bucketedPoints[0],
+        { time: bucketedPoints[0].time + TIMEFRAME_BUCKET_SECONDS[timeframe], value: bucketedPoints[0].value },
+      ];
+    }
+
+    return [
+      { time: now - TIMEFRAME_BUCKET_SECONDS[timeframe], value: 0 },
+      { time: now, value: 0 },
+    ];
+  }, [pair, pairTransactions, chartTab, timeframe]);
+
+  const latestChartPoint = chartPoints[chartPoints.length - 1];
+  const latestChartValue = latestChartPoint?.value ?? 0;
 
   return (
     <div className="pool">
@@ -295,17 +611,27 @@ const PoolDetailPage = ({ pair }: PoolDetailPageProps): JSX.Element => {
               />
             </div>
 
-            <div className="pool-detail-chart__body">
-              <div className="pool-detail-chart__plot">
-                <div className="pool-detail-chart__grid" />
-                <span className="pool-detail-chart__line pool-detail-chart__line--vertical" />
-                <span className="pool-detail-chart__line pool-detail-chart__line--horizontal" />
-                <span className="pool-detail-chart__price-tag">{formatRate(pair?.token0Price)} {token1Symbol}</span>
+            <div className="pool-detail-chart">
+              {!pair ? (
+                <div className="pool-detail-chart__status">Select a pool to load chart data.</div>
+              ) : isChartLoading ? (
+                <div className="pool-detail-chart__status">
+                  <Uik.Loading />
+                </div>
+              ) : hasChartError ? (
+                <div className="pool-detail-chart__status">Could not load chart data from subgraph.</div>
+              ) : (
+                <PoolSeriesChart points={chartPoints} chartTab={chartTab} timeframe={timeframe} />
+              )}
+            </div>
+
+            <div className="pool-detail-chart__summary">
+              <div className="pool-detail-chart__summary-label">
+                <span>{tabLabelByValue[chartTab]} ({timeframe})</span>
+                <strong>{formatChartValue(chartTab, latestChartValue, token0Symbol, token1Symbol)}</strong>
               </div>
-              <div className="pool-detail-chart__axis">
-                {yAxisLabels.map((label, index) => (
-                  <span key={`${label}-${index}`}>{label}</span>
-                ))}
+              <div className="pool-detail-chart__summary-meta">
+                {totalTransactions > 0 ? `${formatCompact(totalTransactions)} tx indexed` : 'No transactions indexed yet'}
               </div>
             </div>
           </Uik.Card>
