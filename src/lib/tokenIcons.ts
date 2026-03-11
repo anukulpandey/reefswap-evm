@@ -57,10 +57,15 @@ export const resolveTokenIconUrl = (params: {
   symbol?: string | null;
   iconUrl?: string | null;
 }): string => {
+  const symbol = params.symbol?.trim().toUpperCase();
+  if (symbol === 'REEF' || symbol === 'WREEF') {
+    return REEF_TOKEN_ICON_URL;
+  }
+
   const resolvedUrl = resolveIpfsUrl(params.iconUrl);
   if (resolvedUrl) return resolvedUrl;
 
   const tokenAddress = params.address
-    || (params.symbol?.trim().toUpperCase() === 'REEF' ? REEF_ADDRESS : params.symbol || '');
+    || (symbol === 'REEF' ? REEF_ADDRESS : params.symbol || '');
   return getIconUrl(tokenAddress);
 };
