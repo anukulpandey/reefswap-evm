@@ -59,6 +59,26 @@ export type SubgraphSwap = {
   };
 };
 
+export type SubgraphAccountSwap = {
+  id: string;
+  timestamp: string;
+  sender: string;
+  to: string;
+  amount0In: string;
+  amount1In: string;
+  amount0Out: string;
+  amount1Out: string;
+  amountUSD: string;
+  pair: {
+    id: string;
+    token0: Pick<SubgraphToken, 'id' | 'symbol' | 'decimals'>;
+    token1: Pick<SubgraphToken, 'id' | 'symbol' | 'decimals'>;
+  };
+  transaction: {
+    id: string;
+  };
+};
+
 export type SubgraphMintBurn = {
   id: string;
   timestamp: string;
@@ -150,6 +170,45 @@ const SUBGRAPH_PAIR_TRANSACTIONS_QUERY = `
   }
 `;
 
+const SUBGRAPH_ACCOUNT_SWAPS_QUERY = `
+  query AccountSwaps($address: String!, $first: Int!) {
+    senderSwaps: swaps(first: $first, where: { sender: $address }, orderBy: timestamp, orderDirection: desc) {
+      id
+      timestamp
+      sender
+      to
+      amount0In
+      amount1In
+      amount0Out
+      amount1Out
+      amountUSD
+      pair {
+        id
+        token0 { id symbol decimals }
+        token1 { id symbol decimals }
+      }
+      transaction { id }
+    }
+    receiverSwaps: swaps(first: $first, where: { to: $address }, orderBy: timestamp, orderDirection: desc) {
+      id
+      timestamp
+      sender
+      to
+      amount0In
+      amount1In
+      amount0Out
+      amount1Out
+      amountUSD
+      pair {
+        id
+        token0 { id symbol decimals }
+        token1 { id symbol decimals }
+      }
+      transaction { id }
+    }
+  }
+`;
+
 const requestSubgraph = async <TData, TVariables extends Record<string, unknown> | undefined = undefined>(
   query: string,
   variables?: TVariables,
@@ -202,3 +261,32 @@ export const fetchSubgraphPairTransactions = async (pairId: string, first = 20):
   },
   { pairId: string; first: number }
 >(SUBGRAPH_PAIR_TRANSACTIONS_QUERY, { pairId: pairId.toLowerCase(), first });
+
+export const fetchSubgraphAccountSwaps = async (address: string, first = 80): Promise<SubgraphAccountSwap[]> => {
+  const normalizedAddress = address.toLowerCase();
+  const data = await requestSubgraph<
+    {
+      senderSwaps: SubgraphAccountSwap[];
+      receiverSwaps: SubgraphAccountSwap[];
+    },
+    { address: string; first: number }
+  >(SUBGRAPH_ACCOUNT_SWAPS_QUERY, { address: normalizedAddress, first });
+
+  const byTxHash = new Map<string, SubgraphAccountSwap>();
+  [...(data.senderSwaps || []), ...(data.receiverSwaps || [])].forEach((swap) => {
+    const txHash = swap.transaction?.id?.toLowerCase();
+    if (!txHash) return;
+    const existing = byTxHash.get(txHash);
+    if (!existing) {
+      byTxHash.set(txHash, swap);
+      return;
+    }
+    const existingTs = Number(existing.timestamp || 0);
+    const nextTs = Number(swap.timestamp || 0);
+    if (nextTs > existingTs) {
+      byTxHash.set(txHash, swap);
+    }
+  });
+
+  return Array.from(byTxHash.values()).sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+};

@@ -1,4 +1,4 @@
-import { ArrowUpRight, ArrowDownLeft, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, ArrowLeftRight, ChevronDown, ChevronUp, ExternalLink, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import UiKit from '@reef-chain/ui-kit';
 import { useBalanceVisibility } from '@/contexts/BalanceVisibilityContext';
@@ -8,7 +8,7 @@ import { useReefExplorer } from '@/hooks/useReefExplorer';
 import { useEffect, useMemo, useState, type SyntheticEvent } from 'react';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 
-const ITEMS_PER_PAGE = 5;
+const ITEMS_PER_PAGE = 8;
 type PageItem = number | 'ellipsis';
 
 const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
@@ -21,12 +21,41 @@ const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?:
   applyFallbackTokenIcon(event.currentTarget, address, symbol);
 };
 
+const InlineTokenLabel = ({
+  symbol,
+  address,
+  iconUrl,
+  iconClassName = 'h-4 w-4',
+  textClassName = '',
+}: {
+  symbol: string;
+  address?: string | null;
+  iconUrl?: string | null;
+  iconClassName?: string;
+  textClassName?: string;
+}) => (
+  <span className={`inline-flex items-center gap-1.5 ${textClassName}`.trim()}>
+    <img
+      src={resolveTokenIconUrl({
+        address,
+        symbol,
+        iconUrl: iconUrl || null,
+      })}
+      alt={`${symbol} icon`}
+      className={`${iconClassName} rounded-full object-cover`}
+      onError={(event) => handleTokenIconError(event, address, symbol)}
+    />
+    <span>{symbol}</span>
+  </span>
+);
+
 const ActivityPanel = () => {
   const { showBalances } = useBalanceVisibility();
   const { address } = useAccount();
   const { transactions, isLoading } = useReefTransactions(address);
   const { explorerUrl } = useReefExplorer(address);
   const [page, setPage] = useState(1);
+  const [expandedSwapIds, setExpandedSwapIds] = useState<Set<string>>(new Set());
   const txExplorerUrl = (hash: string) => `${explorerUrl}/tx/${hash}`;
 
   const formatAmount = (value: number) => {
@@ -98,6 +127,25 @@ const ActivityPanel = () => {
     }
   }, [page, totalPages]);
 
+  useEffect(() => {
+    setExpandedSwapIds((current) => {
+      const visibleIds = new Set(transactions.map((tx) => tx.id));
+      return new Set(Array.from(current).filter((id) => visibleIds.has(id)));
+    });
+  }, [transactions]);
+
+  const toggleSwapExpanded = (id: string) => {
+    setExpandedSwapIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
   return (
     <Card className="bg-transparent rounded-2xl border-0 p-0 shadow-none">
       <div className="flex items-center justify-between mb-6">
@@ -123,113 +171,185 @@ const ActivityPanel = () => {
             No transactions yet
           </div>
         ) : (
-          pagedTransactions.map((tx, index) => (
-            <div key={tx.id}>
-              {tx.txHash ? (
-                <a
-                  href={txExplorerUrl(tx.txHash)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block"
-                >
-                  <div
-                    className={`flex cursor-pointer items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${
-                      index === 0 ? 'rounded-t-3xl' : ''
-                    } ${index === pagedTransactions.length - 1 ? 'rounded-b-3xl' : ''}`}
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
-                        {tx.type === 'sent' ? (
-                          <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
-                        ) : (
-                          <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="text-base font-semibold text-[#1b1530]">
-                          {tx.type === 'sent' ? `Sent ${tx.symbol}` : `Received ${tx.symbol}`}
-                        </p>
-                        <p className="text-sm font-medium text-[#8e899c]">
-                          {tx.date} · {tx.time}
-                        </p>
-                      </div>
-                    </div>
+          pagedTransactions.map((tx, index) => {
+            const roundedClass = `${index === 0 ? 'rounded-t-3xl' : ''} ${index === pagedTransactions.length - 1 ? 'rounded-b-3xl' : ''}`;
 
-                    <div className="flex items-center gap-3">
-                      <span className="text-base font-semibold text-[#a8a4b3]">
-                        {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
-                      </span>
-                      {showBalances && (
-                        tx.isNativeAsset ? (
-                          <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
-                        ) : (
-                          <img
-                            src={resolveTokenIconUrl({
-                              address: tx.tokenAddress,
-                              symbol: tx.symbol,
-                              iconUrl: tx.tokenIconUrl,
-                            })}
-                            alt={`${tx.symbol} icon`}
-                            className="h-5 w-5 rounded-full object-cover"
-                            onError={(event) => handleTokenIconError(event, tx.tokenAddress, tx.symbol)}
-                          />
-                        )
-                      )}
-                    </div>
-                  </div>
-                </a>
-              ) : (
-                <div
-                  className={`flex items-center justify-between px-6 py-5 ${
-                    index === 0 ? 'rounded-t-3xl' : ''
-                  } ${index === pagedTransactions.length - 1 ? 'rounded-b-3xl' : ''}`}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
-                      {tx.type === 'sent' ? (
-                        <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
-                      ) : (
-                        <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-base font-semibold text-[#1b1530]">
-                        {tx.type === 'sent' ? `Sent ${tx.symbol}` : `Received ${tx.symbol}`}
-                      </p>
-                      <p className="text-sm font-medium text-[#8e899c]">
-                        {tx.date} · {tx.time}
-                      </p>
-                    </div>
-                  </div>
+            if (tx.type === 'swap') {
+              const isExpanded = expandedSwapIds.has(tx.id);
+              const details = tx.swapDetails;
 
-                  <div className="flex items-center gap-3">
-                    <span className="text-base font-semibold text-[#a8a4b3]">
-                      {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
-                    </span>
-                    {showBalances && (
-                      tx.isNativeAsset ? (
-                        <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
-                      ) : (
-                        <img
-                          src={resolveTokenIconUrl({
-                            address: tx.tokenAddress,
-                            symbol: tx.symbol,
-                            iconUrl: tx.tokenIconUrl,
-                          })}
-                          alt={`${tx.symbol} icon`}
-                          className="h-5 w-5 rounded-full object-cover"
-                          onError={(event) => handleTokenIconError(event, tx.tokenAddress, tx.symbol)}
-                        />
-                      )
+              return (
+                <div key={tx.id}>
+                  <div className={`${roundedClass} transition-colors hover:bg-[#f3f4f7]`}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSwapExpanded(tx.id)}
+                      className="w-full px-6 py-5 text-left"
+                    >
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
+                            <ArrowLeftRight className="w-6 h-6 text-[#a8a4b3]" />
+                          </div>
+                          <div>
+                            <p className="text-base font-semibold text-[#1b1530]">
+                              {`Swapped ${details?.fromSymbol || 'TOKEN'} for ${details?.toSymbol || 'TOKEN'}`}
+                            </p>
+                            <p className="text-sm font-medium text-[#8e899c]">
+                              {tx.date} · {tx.time}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <span className="text-base font-semibold text-[#a8a4b3]">
+                            {showBalances
+                              ? `+${formatAmount(details?.toAmount ?? tx.amount)} ${details?.toSymbol || tx.symbol}`
+                              : '••••••'}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-[#8e899c]" />
+                          ) : (
+                            <ChevronDown className="w-5 h-5 text-[#8e899c]" />
+                          )}
+                        </div>
+                      </div>
+                    </button>
+
+                    {isExpanded && details && (
+                      <div className="px-6 pb-5">
+                        <div className="w-full rounded-2xl border border-[#ebe6f4] bg-[#f8f5fc] p-4">
+                          <div className="flex items-center justify-between text-sm font-medium text-[#5c576e]">
+                            <span>From</span>
+                            {showBalances ? (
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-[#1b1530]">
+                                <span>{formatAmount(details.fromAmount)}</span>
+                                <InlineTokenLabel
+                                  symbol={details.fromSymbol}
+                                  address={details.fromTokenAddress}
+                                  iconClassName="h-4 w-4"
+                                />
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-[#1b1530]">••••••</span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-sm font-medium text-[#5c576e]">
+                            <span>To</span>
+                            {showBalances ? (
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-[#1b1530]">
+                                <span>{formatAmount(details.toAmount)}</span>
+                                <InlineTokenLabel
+                                  symbol={details.toSymbol}
+                                  address={details.toTokenAddress}
+                                  iconUrl={tx.tokenIconUrl || null}
+                                  iconClassName="h-4 w-4"
+                                />
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-[#1b1530]">••••••</span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-sm font-medium text-[#5c576e]">
+                            <span>Fees</span>
+                            {showBalances ? (
+                              <span className="inline-flex items-center gap-1.5 font-semibold text-[#1b1530]">
+                                <span>{formatAmount(details.feeAmount)}</span>
+                                <InlineTokenLabel
+                                  symbol={details.feeSymbol}
+                                  address={null}
+                                  iconClassName="h-4 w-4"
+                                />
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-[#1b1530]">••••••</span>
+                            )}
+                          </div>
+                          {tx.txHash ? (
+                            <a
+                              href={txExplorerUrl(tx.txHash)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-3 inline-flex items-center text-xs font-semibold text-[#b13c8e] hover:opacity-80"
+                            >
+                              View transaction
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
                     )}
                   </div>
+                  {index < pagedTransactions.length - 1 && (
+                    <div className="mx-6 h-px bg-[#ebe6f4]" />
+                  )}
                 </div>
-              )}
-              {index < pagedTransactions.length - 1 && (
-                <div className="mx-6 h-px bg-[#ebe6f4]" />
-              )}
-            </div>
-          ))
+              );
+            }
+
+            const cardBody = (
+              <div
+                className={`flex items-center justify-between px-6 py-5 transition-colors hover:bg-[#f3f4f7] ${roundedClass}`}
+              >
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-2xl bg-[#eef0f5] flex items-center justify-center">
+                    {tx.type === 'sent' ? (
+                      <ArrowUpRight className="w-6 h-6 text-[#a8a4b3]" />
+                    ) : (
+                      <ArrowDownLeft className="w-6 h-6 text-[#a8a4b3]" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-base font-semibold text-[#1b1530]">
+                      {tx.type === 'sent' ? `Sent ${tx.symbol}` : `Received ${tx.symbol}`}
+                    </p>
+                    <p className="text-sm font-medium text-[#8e899c]">
+                      {tx.date} · {tx.time}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-base font-semibold text-[#a8a4b3]">
+                    {showBalances ? `${tx.type === 'sent' ? '-' : '+'}${formatAmount(tx.amount)}` : '••••••'}
+                  </span>
+                  {showBalances && (
+                    tx.isNativeAsset ? (
+                      <UiKit.ReefIcon className="h-5 w-5 text-[#b08ac8]/70" />
+                    ) : (
+                      <img
+                        src={resolveTokenIconUrl({
+                          address: tx.tokenAddress,
+                          symbol: tx.symbol,
+                          iconUrl: tx.tokenIconUrl,
+                        })}
+                        alt={`${tx.symbol} icon`}
+                        className="h-5 w-5 rounded-full object-cover"
+                        onError={(event) => handleTokenIconError(event, tx.tokenAddress, tx.symbol)}
+                      />
+                    )
+                  )}
+                </div>
+              </div>
+            );
+
+            return (
+              <div key={tx.id}>
+                {tx.txHash ? (
+                  <a
+                    href={txExplorerUrl(tx.txHash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block"
+                  >
+                    {cardBody}
+                  </a>
+                ) : cardBody}
+                {index < pagedTransactions.length - 1 && (
+                  <div className="mx-6 h-px bg-[#ebe6f4]" />
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
