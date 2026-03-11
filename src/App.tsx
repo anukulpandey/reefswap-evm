@@ -24,6 +24,7 @@ import CreatorPage from './components/reef/creator/CreatorPage';
 import PoolDetailPage from './components/reef/PoolDetailPage';
 import { useReefBalance } from './hooks/useReefBalance';
 import { useReefPrice } from './hooks/useReefPrice';
+import { useReefWalletTokens } from './hooks/useReefWalletTokens';
 import { useSubgraphFactory, useSubgraphPairs, useSubgraphTokens } from './hooks/useSubgraph';
 import { type SubgraphPair } from './lib/subgraph';
 
@@ -408,6 +409,7 @@ const App = () => {
   } = useSubgraphPairs(200);
   const { data: subgraphTokens = [] } = useSubgraphTokens(300);
   const { data: subgraphFactory, refetch: refetchSubgraphFactory } = useSubgraphFactory();
+  const { tokens: walletTokens = [] } = useReefWalletTokens(address);
   const { price: liveReefUsdPrice } = useReefPrice();
 
   const showInfoToast = useCallback((message: string) => {
@@ -485,6 +487,26 @@ const App = () => {
       return next;
     });
   }, [subgraphTokens]);
+
+  useEffect(() => {
+    if (!walletTokens.length) return;
+
+    setTokens((current) => {
+      const byKey = new Map<string, TokenOption>();
+      current.forEach((token) => {
+        byKey.set(dedupeTokenKey(token), token);
+      });
+      walletTokens.forEach((token) => {
+        byKey.set(dedupeTokenKey(token), token);
+      });
+
+      const next = Array.from(byKey.values());
+      if (next.length === current.length && next.every((token, index) => dedupeTokenKey(token) === dedupeTokenKey(current[index]))) {
+        return current;
+      }
+      return next;
+    });
+  }, [walletTokens]);
 
   useEffect(() => {
     if (!subgraphPairs.length) {
@@ -1806,7 +1828,11 @@ const App = () => {
         isNative: false,
       };
 
-      setTokens((current) => [...current, token]);
+      setTokens((current) => {
+        const nextKey = dedupeTokenKey(token);
+        if (current.some((item) => dedupeTokenKey(item) === nextKey)) return current;
+        return [...current, token];
+      });
       setTokenOut(token);
       setImportAddress('');
     } catch {

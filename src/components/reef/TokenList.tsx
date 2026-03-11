@@ -16,6 +16,9 @@ import { contracts, reefChain } from '@/lib/config';
 import { tokenKey, type TokenOption } from '@/lib/tokens';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
 
+const ITEMS_PER_PAGE = 10;
+type PageItem = number | 'ellipsis';
+
 interface TokenListProps {
   onSwap?: () => void;
   tokenOptions: TokenOption[];
@@ -45,6 +48,7 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [balancesByTokenKey, setBalancesByTokenKey] = useState<Record<string, number>>({});
   const [isTokenBalancesLoading, setIsTokenBalancesLoading] = useState(false);
+  const [page, setPage] = useState(1);
   const { showBalances } = useBalanceVisibility();
   const { address } = useAccount();
   const publicClient = usePublicClient({ chainId: reefChain.id });
@@ -56,7 +60,7 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
     tokenOptions.forEach((token) => {
       unique.set(tokenKey(token), token);
     });
-    return Array.from(unique.values()).slice(0, 60);
+    return Array.from(unique.values());
   }, [tokenOptions]);
 
   useEffect(() => {
@@ -74,24 +78,60 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
         const nativeRaw = await publicClient.getBalance({ address });
         const nativeBalance = toFinite(formatUnits(nativeRaw, 18));
 
-        const entries = await Promise.all(
-          portfolioTokenOptions.map(async (token) => {
-            if (token.isNative) return [tokenKey(token), nativeBalance] as const;
-            if (!token.address) return [tokenKey(token), 0] as const;
+        const entries: Array<readonly [string, number]> = [];
+        portfolioTokenOptions.forEach((token) => {
+          if (token.isNative) {
+            entries.push([tokenKey(token), nativeBalance] as const);
+          }
+        });
 
-            try {
-              const raw = await publicClient.readContract({
-                address: token.address,
+        const erc20Tokens = portfolioTokenOptions.filter((token) => !token.isNative && Boolean(token.address));
+        const batchSize = 75;
+        for (let index = 0; index < erc20Tokens.length; index += batchSize) {
+          const chunk = erc20Tokens.slice(index, index + batchSize);
+          try {
+            const chunkResults = await publicClient.multicall({
+              allowFailure: true,
+              contracts: chunk.map((token) => ({
+                address: token.address as `0x${string}`,
                 abi: erc20Abi,
                 functionName: 'balanceOf',
                 args: [address],
-              });
-              return [tokenKey(token), toFinite(formatUnits(raw, token.decimals))] as const;
-            } catch {
-              return [tokenKey(token), 0] as const;
+              })),
+            });
+
+            const successCount = chunkResults.filter((result) => result.status === 'success').length;
+            if (successCount === 0) {
+              throw new Error('Multicall returned no successful balanceOf results.');
             }
-          }),
-        );
+
+            chunk.forEach((token, resultIndex) => {
+              const result = chunkResults[resultIndex];
+              if (result.status === 'success') {
+                entries.push([tokenKey(token), toFinite(formatUnits(result.result, token.decimals))] as const);
+              } else {
+                entries.push([tokenKey(token), 0] as const);
+              }
+            });
+          } catch {
+            const fallbackResults = await Promise.all(
+              chunk.map(async (token) => {
+                try {
+                  const raw = await publicClient.readContract({
+                    address: token.address as `0x${string}`,
+                    abi: erc20Abi,
+                    functionName: 'balanceOf',
+                    args: [address],
+                  });
+                  return [tokenKey(token), toFinite(formatUnits(raw, token.decimals))] as const;
+                } catch {
+                  return [tokenKey(token), 0] as const;
+                }
+              }),
+            );
+            fallbackResults.forEach((entry) => entries.push(entry));
+          }
+        }
 
         if (cancelled) return;
         setBalancesByTokenKey(Object.fromEntries(entries));
@@ -149,6 +189,52 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
     if (withBalance.length > 0) return withBalance;
     return sorted.slice(0, 12);
   }, [tokens]);
+  const totalPages = Math.max(1, Math.ceil(visibleTokens.length / ITEMS_PER_PAGE));
+  const pagedTokens = useMemo(() => {
+    const start = (page - 1) * ITEMS_PER_PAGE;
+    return visibleTokens.slice(start, start + ITEMS_PER_PAGE);
+  }, [page, visibleTokens]);
+  const paginationItems = useMemo<PageItem[]>(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
+
+    const pages = new Set<number>([1, totalPages, page - 1, page, page + 1]);
+    if (page <= 3) {
+      pages.add(2);
+      pages.add(3);
+    }
+    if (page >= totalPages - 2) {
+      pages.add(totalPages - 1);
+      pages.add(totalPages - 2);
+    }
+
+    const sorted = Array.from(pages)
+      .filter((value) => value >= 1 && value <= totalPages)
+      .sort((a, b) => a - b);
+
+    const output: PageItem[] = [];
+    sorted.forEach((value, index) => {
+      if (index === 0) {
+        output.push(value);
+        return;
+      }
+
+      const previous = sorted[index - 1];
+      if (value - previous > 1) {
+        output.push('ellipsis');
+      }
+      output.push(value);
+    });
+
+    return output;
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const handleSend = (token: Token) => {
     setSelectedToken(token);
@@ -182,7 +268,7 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
     <>
       <Card className="bg-transparent rounded-2xl shadow-none border-0 overflow-hidden">
         <div className="space-y-2">
-          {visibleTokens.map((token) => (
+          {pagedTokens.map((token) => (
             <div
               key={token.id}
               className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]"
@@ -254,13 +340,62 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
               </div>
             </div>
           ))}
-          {visibleTokens.length === 0 ? (
+          {pagedTokens.length === 0 ? (
             <div className="rounded-2xl bg-white px-4 py-6 text-sm text-[#8e899c] shadow-sm border border-[#ebe6f4] w-[92%]">
               No tokens available for this wallet yet.
             </div>
           ) : null}
         </div>
       </Card>
+
+      {visibleTokens.length > ITEMS_PER_PAGE ? (
+        <div className="mt-4 flex items-center justify-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={page === 1}
+            className="h-8 min-w-8 rounded-[10px] bg-[#e2dcea] px-2.5 text-sm font-semibold text-[#4a4260] disabled:opacity-45"
+          >
+            ‹
+          </button>
+          {paginationItems.map((item, index) => {
+            if (item === 'ellipsis') {
+              return (
+                <span
+                  key={`ellipsis-${index}`}
+                  className="inline-flex h-8 min-w-8 items-center justify-center rounded-[10px] bg-transparent px-1 text-sm font-semibold text-[#8e899c]"
+                >
+                  ...
+                </span>
+              );
+            }
+
+            const isActive = item === page;
+            return (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setPage(item)}
+                className={`h-8 min-w-8 rounded-[10px] px-2.5 text-sm font-semibold ${
+                  isActive
+                    ? 'bg-gradient-to-r from-[#a93185] to-[#7a32b4] text-white'
+                    : 'bg-[#e2dcea] text-[#4a4260]'
+                }`}
+              >
+                {item}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+            disabled={page === totalPages}
+            className="h-8 min-w-8 rounded-[10px] bg-[#e2dcea] px-2.5 text-sm font-semibold text-[#4a4260] disabled:opacity-45"
+          >
+            ›
+          </button>
+        </div>
+      ) : null}
 
       <SendModal
         isOpen={sendModalOpen}
