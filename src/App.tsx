@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type SyntheticEvent } from 'react';
 import Uik from '@reef-chain/ui-kit';
 import {
   useAccount,
@@ -54,6 +54,8 @@ type UserPoolPosition = {
   pairId: string;
   token0Symbol: string;
   token1Symbol: string;
+  token0Address: Address | null;
+  token1Address: Address | null;
   token0IsReef: boolean;
   token1IsReef: boolean;
   lpBalance: bigint;
@@ -435,6 +437,24 @@ const App = () => {
   const showErrorToast = useCallback((message: string) => {
     Uik.notify.danger({ message });
   }, []);
+
+  const copyTokenAddress = useCallback(async (
+    address: Address | null,
+    symbol: string,
+    event?: MouseEvent<HTMLElement>,
+  ) => {
+    event?.stopPropagation();
+    if (!address) {
+      showErrorToast('Token address unavailable.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(address);
+      showSuccessToast(`${symbol} address copied.`);
+    } catch {
+      showErrorToast('Failed to copy token address.');
+    }
+  }, [showErrorToast, showSuccessToast]);
 
   const wrappedReefAddress = routerWrappedTokenSource === 'loading' ? contracts.wrappedReef : routerWrappedToken;
   const factoryAddress = routerFactorySource === 'loading' ? contracts.factory : routerFactoryAddress;
@@ -2966,6 +2986,8 @@ const App = () => {
         if (indexedPair) {
           const token0Symbol = getPairTokenDisplaySymbol(indexedPair.token0);
           const token1Symbol = getPairTokenDisplaySymbol(indexedPair.token1);
+          const token0Address = isAddress(indexedPair.token0.id) ? getAddress(indexedPair.token0.id) : null;
+          const token1Address = isAddress(indexedPair.token1.id) ? getAddress(indexedPair.token1.id) : null;
           const token0Amount = Math.max(0, asNumber(indexedPair.reserve0) * lpShare);
           const token1Amount = Math.max(0, asNumber(indexedPair.reserve1) * lpShare);
           const usdValue = Math.max(0, getPairUsdMetrics(indexedPair).reserveUsd * lpShare);
@@ -2974,6 +2996,8 @@ const App = () => {
             pairId: indexedPair.id,
             token0Symbol,
             token1Symbol,
+            token0Address,
+            token1Address,
             token0IsReef: isPairTokenReef(indexedPair.token0),
             token1IsReef: isPairTokenReef(indexedPair.token1),
             lpBalance: snapshot.balance,
@@ -3006,6 +3030,8 @@ const App = () => {
           pairId,
           token0Symbol,
           token1Symbol,
+          token0Address: onChainPair.token0,
+          token1Address: onChainPair.token1,
           token0IsReef,
           token1IsReef,
           lpBalance: snapshot.balance,
@@ -3629,8 +3655,8 @@ const App = () => {
               subgraphPairs.map((pair) => {
                 const token0Symbol = getPairTokenDisplaySymbol(pair.token0);
                 const token1Symbol = getPairTokenDisplaySymbol(pair.token1);
-                const token0IsReef = isPairTokenReef(pair.token0);
-                const token1IsReef = isPairTokenReef(pair.token1);
+                const token0Address = isAddress(pair.token0.id) ? getAddress(pair.token0.id) : null;
+                const token1Address = isAddress(pair.token1.id) ? getAddress(pair.token1.id) : null;
                 const pairUsdMetrics = getPairUsdMetrics(pair);
 
                 return (
@@ -3648,15 +3674,41 @@ const App = () => {
                         navigateRoute('pool-detail', { poolId: pair.id });
                       }
                     }}
-                  >
+                    >
                     <div className="col-span-2 flex items-center gap-3">
                       <div className="flex -space-x-2">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm text-white text-sm font-semibold">
-                          {token0IsReef ? <Uik.ReefIcon className="h-5 w-5 text-white" /> : token0Symbol.slice(0, 1)}
-                        </div>
-                        <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm text-[#7a3bbd] text-sm font-semibold">
-                          {token1IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5 text-[#7a3bbd]" /> : token1Symbol.slice(0, 1)}
-                        </div>
+                        <button
+                          type="button"
+                          title="Copy token address"
+                          aria-label={`Copy ${token0Symbol} token address`}
+                          className="w-9 h-9 rounded-full z-10 shadow-sm p-0 border-0 bg-transparent"
+                          onClick={(event) => {
+                            copyTokenAddress(token0Address, token0Symbol, event);
+                          }}
+                        >
+                          <img
+                            src={resolveTokenIconUrl({ address: token0Address, symbol: token0Symbol, iconUrl: null })}
+                            alt={`${token0Symbol} icon`}
+                            className="w-9 h-9 rounded-full object-cover"
+                            onError={(event) => handleTokenIconError(event, token0Address, token0Symbol)}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          title="Copy token address"
+                          aria-label={`Copy ${token1Symbol} token address`}
+                          className="w-9 h-9 rounded-full shadow-sm p-0 border-0 bg-transparent"
+                          onClick={(event) => {
+                            copyTokenAddress(token1Address, token1Symbol, event);
+                          }}
+                        >
+                          <img
+                            src={resolveTokenIconUrl({ address: token1Address, symbol: token1Symbol, iconUrl: null })}
+                            alt={`${token1Symbol} icon`}
+                            className="w-9 h-9 rounded-full object-cover border-2 border-white"
+                            onError={(event) => handleTokenIconError(event, token1Address, token1Symbol)}
+                          />
+                        </button>
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-[#1b1530]">{token0Symbol} / {token1Symbol}</p>
@@ -3710,12 +3762,38 @@ const App = () => {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="flex -space-x-2 flex-shrink-0">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#a93185] to-[#5d3bad] flex items-center justify-center z-10 shadow-sm text-white text-sm font-semibold">
-                          {position.token0IsReef ? <Uik.ReefIcon className="h-5 w-5 text-white" /> : position.token0Symbol.slice(0, 1)}
-                        </div>
-                        <div className="w-9 h-9 rounded-full bg-[#e0d8f0] flex items-center justify-center border-2 border-white shadow-sm text-[#7a3bbd] text-sm font-semibold">
-                          {position.token1IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5 text-[#7a3bbd]" /> : position.token1Symbol.slice(0, 1)}
-                        </div>
+                        <button
+                          type="button"
+                          title="Copy token address"
+                          aria-label={`Copy ${position.token0Symbol} token address`}
+                          className="w-9 h-9 rounded-full z-10 shadow-sm p-0 border-0 bg-transparent"
+                          onClick={(event) => {
+                            copyTokenAddress(position.token0Address, position.token0Symbol, event);
+                          }}
+                        >
+                          <img
+                            src={resolveTokenIconUrl({ address: position.token0Address, symbol: position.token0Symbol, iconUrl: null })}
+                            alt={`${position.token0Symbol} icon`}
+                            className="w-9 h-9 rounded-full object-cover"
+                            onError={(event) => handleTokenIconError(event, position.token0Address, position.token0Symbol)}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          title="Copy token address"
+                          aria-label={`Copy ${position.token1Symbol} token address`}
+                          className="w-9 h-9 rounded-full shadow-sm p-0 border-0 bg-transparent"
+                          onClick={(event) => {
+                            copyTokenAddress(position.token1Address, position.token1Symbol, event);
+                          }}
+                        >
+                          <img
+                            src={resolveTokenIconUrl({ address: position.token1Address, symbol: position.token1Symbol, iconUrl: null })}
+                            alt={`${position.token1Symbol} icon`}
+                            className="w-9 h-9 rounded-full object-cover border-2 border-white"
+                            onError={(event) => handleTokenIconError(event, position.token1Address, position.token1Symbol)}
+                          />
+                        </button>
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-[#1b1530] truncate">
@@ -3825,8 +3903,8 @@ const App = () => {
             {(subgraphPairs.length ? subgraphPairs : []).map((pool) => {
               const token0Symbol = getPairTokenDisplaySymbol(pool.token0);
               const token1Symbol = getPairTokenDisplaySymbol(pool.token1);
-              const token0IsReef = isPairTokenReef(pool.token0);
-              const token1IsReef = isPairTokenReef(pool.token1);
+              const token0Address = isAddress(pool.token0.id) ? getAddress(pool.token0.id) : null;
+              const token1Address = isAddress(pool.token1.id) ? getAddress(pool.token1.id) : null;
               const poolUsdMetrics = getPairUsdMetrics(pool);
 
               return (
@@ -3836,12 +3914,38 @@ const App = () => {
                 >
                   <div className="flex items-center gap-3">
                     <div className="relative h-9 w-[3rem] flex-shrink-0">
-                      <span className="absolute left-0 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-[#ab2cc6] to-[#6d35b2] text-white shadow-sm">
-                        {token0IsReef ? <Uik.ReefIcon className="h-4.5 w-4.5" /> : token0Symbol.slice(0, 1)}
-                      </span>
-                      <span className="absolute left-4 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-[#d4cee3] text-sm font-bold text-[#574a75] shadow-sm">
-                        {token1IsReef ? <Uik.ReefIcon className="h-4 w-4 text-[#7a3bbd]" /> : token1Symbol.slice(0, 1)}
-                      </span>
+                      <button
+                        type="button"
+                        title="Copy token address"
+                        aria-label={`Copy ${token0Symbol} token address`}
+                        className="absolute left-0 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full shadow-sm p-0 border-0 bg-transparent"
+                        onClick={(event) => {
+                          copyTokenAddress(token0Address, token0Symbol, event);
+                        }}
+                      >
+                        <img
+                          src={resolveTokenIconUrl({ address: token0Address, symbol: token0Symbol, iconUrl: null })}
+                          alt={`${token0Symbol} icon`}
+                          className="h-9 w-9 rounded-full object-cover"
+                          onError={(event) => handleTokenIconError(event, token0Address, token0Symbol)}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        title="Copy token address"
+                        aria-label={`Copy ${token1Symbol} token address`}
+                        className="absolute left-4 top-1/2 h-9 w-9 -translate-y-1/2 rounded-full shadow-sm p-0 border-0 bg-transparent"
+                        onClick={(event) => {
+                          copyTokenAddress(token1Address, token1Symbol, event);
+                        }}
+                      >
+                        <img
+                          src={resolveTokenIconUrl({ address: token1Address, symbol: token1Symbol, iconUrl: null })}
+                          alt={`${token1Symbol} icon`}
+                          className="h-9 w-9 rounded-full border border-white object-cover"
+                          onError={(event) => handleTokenIconError(event, token1Address, token1Symbol)}
+                        />
+                      </button>
                     </div>
                     <span className="text-[0.95rem] font-semibold text-[#1f2743]">{token0Symbol} / {token1Symbol}</span>
                   </div>
