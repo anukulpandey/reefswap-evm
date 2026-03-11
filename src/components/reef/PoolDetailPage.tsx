@@ -15,8 +15,8 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { type SubgraphPair, type SubgraphSwap } from '@/lib/subgraph';
-import { erc20Abi, reefswapRouterAbi } from '@/lib/abi';
-import { reefChain } from '@/lib/config';
+import { erc20Abi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from '@/lib/abi';
+import { contracts, reefChain } from '@/lib/config';
 import { useReefPrice } from '@/hooks/useReefPrice';
 import { useSubgraphPairTransactions } from '@/hooks/useSubgraph';
 import { resolveTokenIconUrl } from '@/lib/tokenIcons';
@@ -102,6 +102,13 @@ const asNumber = (value: string | number | null | undefined): number => {
 
 const sameAddress = (a: string | null | undefined, b: string | null | undefined): boolean =>
   String(a || '').toLowerCase() === String(b || '').toLowerCase();
+
+const isUserRejectionError = (error: unknown): boolean => {
+  const code = (error as { code?: number; cause?: { code?: number } })?.code
+    ?? (error as { cause?: { code?: number } })?.cause?.code;
+  const message = String((error as { message?: string })?.message || '').toLowerCase();
+  return code === 4001 || message.includes('user rejected') || message.includes('user denied');
+};
 
 const trimDecimalString = (value: string): string => {
   if (!value.includes('.')) return value;
@@ -492,7 +499,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
 
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
-  const [chartStyle, setChartStyle] = useState<ChartStyle>('candles');
+  const [chartStyle, setChartStyle] = useState<ChartStyle>('area');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
   const [showCrosshair, setShowCrosshair] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
@@ -527,6 +534,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const [lastTxHash, setLastTxHash] = useState<Address | null>(null);
   const [isTransactionsOpen, setTransactionsOpen] = useState(false);
   const [transactionsTab, setTransactionsTab] = useState<PoolTransactionTab>('All');
+  const accountAddress = (address || walletClient?.account?.address || null) as Address | null;
 
   const {
     data: pairTransactions,
@@ -541,8 +549,8 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   const token1SymbolRaw = pair?.token1.symbol || 'TOKEN';
   const token0SymbolUpper = token0SymbolRaw.toUpperCase();
   const token1SymbolUpper = token1SymbolRaw.toUpperCase();
-  const token0IsCanonicalReef = sameAddress(token0Address, wrappedTokenAddress) || token0SymbolUpper === 'WREEF';
-  const token1IsCanonicalReef = sameAddress(token1Address, wrappedTokenAddress) || token1SymbolUpper === 'WREEF';
+  const token0IsCanonicalReef = sameAddress(token0Address, wrappedTokenAddress) || token0SymbolUpper === 'WREEF' || token0SymbolUpper === 'REEF';
+  const token1IsCanonicalReef = sameAddress(token1Address, wrappedTokenAddress) || token1SymbolUpper === 'WREEF' || token1SymbolUpper === 'REEF';
   const token0Symbol = token0IsCanonicalReef ? 'REEF' : token0SymbolRaw;
   const token1Symbol = token1IsCanonicalReef ? 'REEF' : token1SymbolRaw;
   const token0Decimals = Number.parseInt(pair?.token0.decimals || '18', 10);
@@ -570,8 +578,24 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   };
   const inputToken = isTradeReversed ? tradeToken1 : tradeToken0;
   const outputToken = isTradeReversed ? tradeToken0 : tradeToken1;
+  // Pool pair tokens are always ERC20 contracts (including WREEF), so
+  // pool trading/liquidity paths should never use native ETH-style methods.
+  const inputUsesNativeReef = false;
+  const outputUsesNativeReef = false;
   const isWrongChain = isConnected && chainId !== reefChain.id;
   const hasTradePair = Boolean(inputToken.address && outputToken.address && !sameAddress(inputToken.address, outputToken.address));
+  const canUseDirectPairSwap = Boolean(
+    hasTradePair &&
+    pairNormalizedAddress &&
+    token0NormalizedAddress &&
+    token1NormalizedAddress &&
+    inputToken.address,
+  );
+  const canUseDirectPairBurn = Boolean(
+    pairNormalizedAddress &&
+    token0NormalizedAddress &&
+    token1NormalizedAddress,
+  );
   const swapPath = useMemo(() => (
     hasTradePair
       ? [inputToken.address as Address, outputToken.address as Address]
@@ -811,7 +835,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     return quotedOutRaw - discount;
   }, [parsedSlippageBps, quotedOutRaw]);
   const hasInsufficientBalance = parsedAmountIn > balanceIn;
-  const requiresApproval = parsedAmountIn > 0n && allowance < parsedAmountIn;
+  const requiresApproval = !canUseDirectPairSwap && !inputUsesNativeReef && parsedAmountIn > 0n && allowance < parsedAmountIn;
   const amountSliderValue = useMemo(() => {
     if (balanceIn <= 0n || parsedAmountIn <= 0n) return 0;
     const basisPoints = Number((parsedAmountIn * 10_000n) / balanceIn);
@@ -944,7 +968,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     return Math.max(0, (amount0 * token0UsdPrice) + (amount1 * token1UsdPrice));
   }, [token0UsdPrice, token1UsdPrice, tradeToken0.decimals, tradeToken1.decimals, unstakeAmountToken0Raw, unstakeAmountToken1Raw]);
   const hasUnstakeInsufficientBalance = unstakeLiquidityRaw > lpTokenBalance;
-  const unstakeRequiresApproval = unstakeLiquidityRaw > 0n && lpTokenAllowance < unstakeLiquidityRaw;
+  const unstakeRequiresApproval = !canUseDirectPairBurn && unstakeLiquidityRaw > 0n && lpTokenAllowance < unstakeLiquidityRaw;
   const canUnstake = actionTab === 'unstake' &&
     isConnected &&
     !isWrongChain &&
@@ -974,7 +998,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   }, []);
 
   const refreshTradeState = useCallback(async () => {
-    if (!publicClient || !address) {
+    if (!publicClient || !accountAddress) {
       setBalanceIn(0n);
       setBalanceOut(0n);
       setAllowance(0n);
@@ -994,7 +1018,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
           address: tokenAddress,
           abi: erc20Abi,
           functionName: 'balanceOf',
-          args: [address],
+          args: [accountAddress],
         }).catch(() => 0n)
         : Promise.resolve(0n)
     );
@@ -1004,7 +1028,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
           address: tokenAddress,
           abi: erc20Abi,
           functionName: 'allowance',
-          args: [address, contracts.router],
+          args: [accountAddress, contracts.router],
         }).catch(() => 0n)
         : Promise.resolve(0n)
     );
@@ -1020,12 +1044,24 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
 
     setIsRefreshing(true);
     try {
+      const nativeBalance = await publicClient.getBalance({ address: accountAddress }).catch(() => 0n);
+      const readDisplayTradeBalance = (token: TradeToken): Promise<bigint> => (
+        readBalance(token.address).then((erc20Balance) => (
+          token.isCanonicalReef ? (erc20Balance + nativeBalance) : erc20Balance
+        ))
+      );
+      const readDisplayStakeBalance = (tokenAddress: Address | null, isCanonicalReefToken: boolean): Promise<bigint> => (
+        readBalance(tokenAddress).then((erc20Balance) => (
+          isCanonicalReefToken ? (erc20Balance + nativeBalance) : erc20Balance
+        ))
+      );
+
       const [nextBalanceIn, nextBalanceOut, nextAllowance, nextToken0Balance, nextToken1Balance, nextToken0Allowance, nextToken1Allowance, nextLpBalance, nextLpAllowance, nextLpTotalSupply] = await Promise.all([
-        readBalance(inputToken.address),
-        readBalance(outputToken.address),
-        readAllowance(inputToken.address),
-        readBalance(token0NormalizedAddress),
-        readBalance(token1NormalizedAddress),
+        readDisplayTradeBalance(inputToken),
+        readDisplayTradeBalance(outputToken),
+        inputUsesNativeReef ? Promise.resolve(MAX_APPROVAL) : readAllowance(inputToken.address),
+        readDisplayStakeBalance(token0NormalizedAddress, tradeToken0.isCanonicalReef),
+        readDisplayStakeBalance(token1NormalizedAddress, tradeToken1.isCanonicalReef),
         readAllowance(token0NormalizedAddress),
         readAllowance(token1NormalizedAddress),
         readBalance(pairNormalizedAddress),
@@ -1045,7 +1081,21 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     } finally {
       setIsRefreshing(false);
     }
-  }, [address, inputToken.address, outputToken.address, pairNormalizedAddress, publicClient, token0NormalizedAddress, token1NormalizedAddress]);
+  }, [
+    accountAddress,
+    inputToken.address,
+    inputToken.isCanonicalReef,
+    inputUsesNativeReef,
+    outputToken.isCanonicalReef,
+    outputToken.address,
+    outputUsesNativeReef,
+    pairNormalizedAddress,
+    publicClient,
+    tradeToken0.isCanonicalReef,
+    tradeToken1.isCanonicalReef,
+    token0NormalizedAddress,
+    token1NormalizedAddress,
+  ]);
 
   useEffect(() => {
     refreshTradeState().catch(() => {
@@ -1189,13 +1239,13 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   };
 
   const approve = async () => {
-    if (!walletClient || !publicClient || !address || !inputToken.address || !hasTradePair) return;
+    if (!walletClient || !publicClient || !accountAddress || !inputToken.address || !hasTradePair || inputUsesNativeReef) return;
 
     setIsApproving(true);
     Uik.notify.info({ message: 'Submitting approval...' });
     try {
       const hash = await walletClient.writeContract({
-        account: address,
+        account: accountAddress,
         chain: reefChain,
         address: inputToken.address,
         abi: erc20Abi,
@@ -1215,20 +1265,118 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   };
 
   const swap = async () => {
-    if (!walletClient || !publicClient || !address || !hasTradePair || parsedAmountIn <= 0n || quotedOutRaw <= 0n) return;
+    if (!walletClient || !publicClient || !accountAddress || !hasTradePair || parsedAmountIn <= 0n || quotedOutRaw <= 0n) return;
 
     setIsSwapping(true);
     Uik.notify.info({ message: 'Submitting swap...' });
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
-      const hash = await walletClient.writeContract({
-        account: address,
-        chain: reefChain,
-        address: contracts.router,
-        abi: reefswapRouterAbi,
-        functionName: 'swapExactTokensForTokens',
-        args: [parsedAmountIn, minOut, swapPath, address, deadline],
-      });
+      const executeDirectPairSwap = async (): Promise<Address> => {
+        if (!pairNormalizedAddress || !token0NormalizedAddress || !token1NormalizedAddress || !inputToken.address) {
+          throw new Error('Direct pair swap is unavailable for this pool.');
+        }
+
+        const reserves = await publicClient.readContract({
+          address: pairNormalizedAddress,
+          abi: reefswapPairAbi,
+          functionName: 'getReserves',
+        });
+        const reserve0 = reserves[0];
+        const reserve1 = reserves[1];
+        const inputIsToken0 = sameAddress(inputToken.address, token0NormalizedAddress);
+        const reserveIn = inputIsToken0 ? reserve0 : reserve1;
+        const reserveOut = inputIsToken0 ? reserve1 : reserve0;
+        const quotedOut = getAmountOut(parsedAmountIn, reserveIn, reserveOut);
+        if (quotedOut <= 0n) {
+          throw new Error('No output amount available for this pool.');
+        }
+        const directOut = applySlippage(quotedOut, parsedSlippageBps);
+        const amountOut = directOut > 0n ? directOut : quotedOut;
+
+        const transferHash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: inputToken.address,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairNormalizedAddress, parsedAmountIn],
+        });
+        setLastTxHash(transferHash);
+        Uik.notify.info({ message: `Transferred to pair. Tx: ${shortAddress(transferHash)}` });
+        await publicClient.waitForTransactionReceipt({ hash: transferHash });
+
+        return walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: pairNormalizedAddress,
+          abi: reefswapPairAbi,
+          functionName: 'swap',
+          args: [
+            inputIsToken0 ? 0n : amountOut,
+            inputIsToken0 ? amountOut : 0n,
+            accountAddress,
+            '0x',
+          ],
+        });
+      };
+
+      let hash: Address;
+      if (inputToken.isCanonicalReef && inputToken.address) {
+        const wrappedBalance = await publicClient.readContract({
+          address: inputToken.address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [accountAddress],
+        }).catch(() => 0n);
+
+        if (wrappedBalance < parsedAmountIn) {
+          const wrapAmount = parsedAmountIn - wrappedBalance;
+          const wrapHash = await walletClient.writeContract({
+            account: accountAddress,
+            chain: reefChain,
+            address: inputToken.address,
+            abi: wrappedReefAbi,
+            functionName: 'deposit',
+            args: [],
+            value: wrapAmount,
+          });
+          setLastTxHash(wrapHash);
+          Uik.notify.info({ message: `Wrapping REEF. Tx: ${shortAddress(wrapHash)}` });
+          await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+        }
+      }
+
+      if (inputUsesNativeReef && !outputUsesNativeReef) {
+        hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: contracts.router,
+          abi: reefswapRouterAbi,
+          functionName: 'swapExactETHForTokens',
+          args: [minOut, swapPath, accountAddress, deadline],
+          value: parsedAmountIn,
+        });
+      } else if (!inputUsesNativeReef && outputUsesNativeReef) {
+        hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: contracts.router,
+          abi: reefswapRouterAbi,
+          functionName: 'swapExactTokensForETH',
+          args: [parsedAmountIn, minOut, swapPath, accountAddress, deadline],
+        });
+      } else if (canUseDirectPairSwap) {
+        hash = await executeDirectPairSwap();
+      } else {
+        hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: contracts.router,
+          abi: reefswapRouterAbi,
+          functionName: 'swapExactTokensForTokens',
+          args: [parsedAmountIn, minOut, swapPath, accountAddress, deadline],
+        });
+      }
       setLastTxHash(hash);
       Uik.notify.info({ message: `Swap submitted. Tx: ${shortAddress(hash)}` });
       await publicClient.waitForTransactionReceipt({ hash });
@@ -1244,13 +1392,13 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   };
 
   const approveLiquidityToken = async () => {
-    if (!walletClient || !publicClient || !address || !stakeApprovalAddress) return;
+    if (!walletClient || !publicClient || !accountAddress || !stakeApprovalAddress) return;
 
     setIsApprovingLiquidity(true);
     Uik.notify.info({ message: `Submitting ${stakeApprovalSymbol} approval...` });
     try {
       const hash = await walletClient.writeContract({
-        account: address,
+        account: accountAddress,
         chain: reefChain,
         address: stakeApprovalAddress,
         abi: erc20Abi,
@@ -1273,7 +1421,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     if (
       !walletClient ||
       !publicClient ||
-      !address ||
+      !accountAddress ||
       !token0NormalizedAddress ||
       !token1NormalizedAddress ||
       stakeAmountToken0Raw <= 0n ||
@@ -1288,23 +1436,96 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
       const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
       const minAmount0 = applySlippage(stakeAmountToken0Raw, parsedSlippageBps);
       const minAmount1 = applySlippage(stakeAmountToken1Raw, parsedSlippageBps);
-      const hash = await walletClient.writeContract({
-        account: address,
-        chain: reefChain,
-        address: contracts.router,
-        abi: reefswapRouterAbi,
-        functionName: 'addLiquidity',
-        args: [
-          token0NormalizedAddress,
-          token1NormalizedAddress,
-          stakeAmountToken0Raw,
-          stakeAmountToken1Raw,
-          minAmount0,
-          minAmount1,
-          address,
-          deadline,
-        ],
-      });
+      const addLiquidityViaPairMint = async (): Promise<Address> => {
+        if (!pairNormalizedAddress) throw new Error('Pair address is unavailable for direct mint.');
+
+        const transfer0Hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: token0NormalizedAddress,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairNormalizedAddress, stakeAmountToken0Raw],
+        });
+        setLastTxHash(transfer0Hash);
+        Uik.notify.info({ message: `Transferred ${tradeToken0.symbol}. Tx: ${shortAddress(transfer0Hash)}` });
+        await publicClient.waitForTransactionReceipt({ hash: transfer0Hash });
+
+        const transfer1Hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: token1NormalizedAddress,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairNormalizedAddress, stakeAmountToken1Raw],
+        });
+        setLastTxHash(transfer1Hash);
+        Uik.notify.info({ message: `Transferred ${tradeToken1.symbol}. Tx: ${shortAddress(transfer1Hash)}` });
+        await publicClient.waitForTransactionReceipt({ hash: transfer1Hash });
+
+        return walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: pairNormalizedAddress,
+          abi: reefswapPairAbi,
+          functionName: 'mint',
+          args: [accountAddress],
+        });
+      };
+
+      const ensureWrappedBalance = async (tokenAddress: Address, requiredAmount: bigint) => {
+        if (!sameAddress(tokenAddress, wrappedTokenAddress) || requiredAmount <= 0n) return;
+        const wrappedBalance = await publicClient.readContract({
+          address: tokenAddress,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [accountAddress],
+        }).catch(() => 0n);
+
+        if (wrappedBalance >= requiredAmount) return;
+        const wrapAmount = requiredAmount - wrappedBalance;
+        const wrapHash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: tokenAddress,
+          abi: wrappedReefAbi,
+          functionName: 'deposit',
+          args: [],
+          value: wrapAmount,
+        });
+        setLastTxHash(wrapHash);
+        Uik.notify.info({ message: `Wrapping REEF. Tx: ${shortAddress(wrapHash)}` });
+        await publicClient.waitForTransactionReceipt({ hash: wrapHash });
+      };
+
+      await ensureWrappedBalance(token0NormalizedAddress, stakeAmountToken0Raw);
+      await ensureWrappedBalance(token1NormalizedAddress, stakeAmountToken1Raw);
+
+      let hash: Address;
+      try {
+        hash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: contracts.router,
+          abi: reefswapRouterAbi,
+          functionName: 'addLiquidity',
+          args: [
+            token0NormalizedAddress,
+            token1NormalizedAddress,
+            stakeAmountToken0Raw,
+            stakeAmountToken1Raw,
+            minAmount0,
+            minAmount1,
+            accountAddress,
+            deadline,
+          ],
+        });
+      } catch (routerAddError) {
+        if (isUserRejectionError(routerAddError)) throw routerAddError;
+        Uik.notify.info({ message: 'Router add failed. Falling back to direct pair mint...' });
+        hash = await addLiquidityViaPairMint();
+      }
+
       setLastTxHash(hash);
       Uik.notify.info({ message: `Liquidity add submitted. Tx: ${shortAddress(hash)}` });
       await publicClient.waitForTransactionReceipt({ hash });
@@ -1320,13 +1541,13 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
   };
 
   const approveUnstakeToken = async () => {
-    if (!walletClient || !publicClient || !address || !pairNormalizedAddress) return;
+    if (!walletClient || !publicClient || !accountAddress || !pairNormalizedAddress) return;
 
     setIsApprovingUnstake(true);
     Uik.notify.info({ message: 'Submitting LP token approval...' });
     try {
       const hash = await walletClient.writeContract({
-        account: address,
+        account: accountAddress,
         chain: reefChain,
         address: pairNormalizedAddress,
         abi: erc20Abi,
@@ -1349,7 +1570,7 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
     if (
       !walletClient ||
       !publicClient ||
-      !address ||
+      !accountAddress ||
       !token0NormalizedAddress ||
       !token1NormalizedAddress ||
       unstakeLiquidityRaw <= 0n
@@ -1363,22 +1584,59 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
       const deadline = BigInt(Math.floor(Date.now() / 1000) + TX_DEADLINE_SECONDS);
       const minAmount0 = applySlippage(unstakeAmountToken0Raw, parsedSlippageBps);
       const minAmount1 = applySlippage(unstakeAmountToken1Raw, parsedSlippageBps);
-      const hash = await walletClient.writeContract({
-        account: address,
-        chain: reefChain,
-        address: contracts.router,
-        abi: reefswapRouterAbi,
-        functionName: 'removeLiquidity',
-        args: [
-          token0NormalizedAddress,
-          token1NormalizedAddress,
-          unstakeLiquidityRaw,
-          minAmount0,
-          minAmount1,
-          address,
-          deadline,
-        ],
-      });
+      const removeLiquidityViaPairBurn = async (): Promise<Address> => {
+        if (!pairNormalizedAddress) throw new Error('Pair address is unavailable for direct burn.');
+
+        const transferLpHash = await walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: pairNormalizedAddress,
+          abi: erc20Abi,
+          functionName: 'transfer',
+          args: [pairNormalizedAddress, unstakeLiquidityRaw],
+        });
+        setLastTxHash(transferLpHash);
+        Uik.notify.info({ message: `Transferred LP to pair. Tx: ${shortAddress(transferLpHash)}` });
+        await publicClient.waitForTransactionReceipt({ hash: transferLpHash });
+
+        return walletClient.writeContract({
+          account: accountAddress,
+          chain: reefChain,
+          address: pairNormalizedAddress,
+          abi: reefswapPairAbi,
+          functionName: 'burn',
+          args: [accountAddress],
+        });
+      };
+
+      let hash: Address;
+      if (canUseDirectPairBurn) {
+        hash = await removeLiquidityViaPairBurn();
+      } else {
+        try {
+          hash = await walletClient.writeContract({
+            account: accountAddress,
+            chain: reefChain,
+            address: contracts.router,
+            abi: reefswapRouterAbi,
+            functionName: 'removeLiquidity',
+            args: [
+              token0NormalizedAddress,
+              token1NormalizedAddress,
+              unstakeLiquidityRaw,
+              minAmount0,
+              minAmount1,
+              accountAddress,
+              deadline,
+            ],
+          });
+        } catch (routerRemoveError) {
+          if (isUserRejectionError(routerRemoveError)) throw routerRemoveError;
+          Uik.notify.info({ message: 'Router remove failed. Falling back to direct pair burn...' });
+          hash = await removeLiquidityViaPairBurn();
+        }
+      }
+
       setLastTxHash(hash);
       Uik.notify.info({ message: `Liquidity remove submitted. Tx: ${shortAddress(hash)}` });
       await publicClient.waitForTransactionReceipt({ hash });

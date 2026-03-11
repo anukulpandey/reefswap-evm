@@ -286,4 +286,14 @@ export const reefswapPairAbi = [
     inputs: [{ name: 'to', type: 'address' }],
     outputs: [{ name: 'liquidity', type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'burn',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'to', type: 'address' }],
+    outputs: [
+      { name: 'amount0', type: 'uint256' },
+      { name: 'amount1', type: 'uint256' },
+    ],
+  },
 ] as const;

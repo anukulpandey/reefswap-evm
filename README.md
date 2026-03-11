@@ -13,9 +13,9 @@ React + Vite Reefswap UI wired to Reef EVM with `wagmi` + MetaMask.
 
 ## Contracts (default)
 
-- WrappedREEF: `0x1C2415Fd6Bc4dD007D28f050eD892C449734c238`
-- Factory: `0x3a7984F200a950aEB56C74840b261e60d50A81E4`
-- Router02: `0xc3F98fd71ec21f5D699a2b406317aFebfc90A0F5`
+- WrappedREEF: `0x3C2BA92EAFAbA6A5aC21502D8C55d3A33950f7A6`
+- Factory: `0xDAb89107eaF290312fd8e80463A6a9Ec3D428F4A`
+- Router02: `0xa3Cab0B7288fA4CAe22CcD8B1a80c4bFaDe27664`
 
 ## Run
 

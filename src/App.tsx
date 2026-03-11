@@ -301,10 +301,14 @@ const addEthereumChainParams = {
 
 const TokensView = ({
   onSwap,
+  onSwapToken,
+  isTokenSwappable,
   tokens,
   wrappedTokenAddress,
 }: {
   onSwap?: () => void;
+  onSwapToken?: (token: TokenOption) => void;
+  isTokenSwappable?: (token: TokenOption) => boolean;
   tokens: TokenOption[];
   wrappedTokenAddress: Address;
 }) => {
@@ -325,7 +329,13 @@ const TokensView = ({
       </section>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <AssetTabs onSwap={onSwap} tokenOptions={tokens} wrappedTokenAddress={wrappedTokenAddress} />
+          <AssetTabs
+            onSwap={onSwap}
+            onSwapToken={onSwapToken}
+            isTokenSwappable={isTokenSwappable}
+            tokenOptions={tokens}
+            wrappedTokenAddress={wrappedTokenAddress}
+          />
         </div>
         <div className="lg:col-span-1">
           <ActivityPanel />
@@ -665,6 +675,9 @@ const App = () => {
   const outputTokenOptions = useMemo(() => {
     return selectableTokens.filter((token) => canSwapBetweenTokens(tokenIn, token));
   }, [canSwapBetweenTokens, tokenIn, selectableTokens]);
+  const isTokenSwappable = useCallback((token: TokenOption): boolean => (
+    selectableTokens.some((candidate) => canSwapBetweenTokens(token, candidate))
+  ), [canSwapBetweenTokens, selectableTokens]);
 
   const activeTokenMenuOptions = useMemo(() => {
     if (openTokenMenu === 'in') return inputTokenOptions;
@@ -1538,6 +1551,30 @@ const App = () => {
     }
   };
 
+  const swapFromDashboardToken = useCallback((token: TokenOption) => {
+    const nextTokenIn = selectableTokens.find((candidate) => dedupeTokenKey(candidate) === dedupeTokenKey(token)) || token;
+    const nextOutputOptions = selectableTokens.filter((candidate) => canSwapBetweenTokens(nextTokenIn, candidate));
+    if (!nextOutputOptions.length) return;
+    const isErc20Input = !nextTokenIn.isNative && !isWrappedReefToken(nextTokenIn);
+    const preferredReefOutput = isErc20Input
+      ? (nextOutputOptions.find((candidate) => candidate.isNative) || nextOutputOptions[0])
+      : null;
+
+    setTokenIn(nextTokenIn);
+    setTokenOut((current) => {
+      if (preferredReefOutput) return preferredReefOutput;
+      const existing = nextOutputOptions.find((candidate) => dedupeTokenKey(candidate) === dedupeTokenKey(current));
+      return existing || nextOutputOptions[0];
+    });
+    setAmountInText('');
+    setAmountOutText('');
+    setQuotedOutRaw(0n);
+    setQuoteError('');
+    setQuoteNote('');
+    setQuoteSource('none');
+    navigateRoute('swap');
+  }, [canSwapBetweenTokens, isWrappedReefToken, navigateRoute, selectableTokens]);
+
   useEffect(() => {
     if ((activeRoute !== 'pool-detail' && activeRoute !== 'chart') || !selectedPoolId) return;
 
@@ -2314,6 +2351,8 @@ const App = () => {
   const tokensRouteView = (
     <TokensView
       onSwap={() => navigateRoute('swap')}
+      onSwapToken={swapFromDashboardToken}
+      isTokenSwappable={isTokenSwappable}
       tokens={tokens}
       wrappedTokenAddress={wrappedReefAddress}
     />

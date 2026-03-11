@@ -21,6 +21,8 @@ type PageItem = number | 'ellipsis';
 
 interface TokenListProps {
   onSwap?: () => void;
+  onSwapToken?: (token: TokenOption) => void;
+  isTokenSwappable?: (token: TokenOption) => boolean;
   tokenOptions: TokenOption[];
   wrappedTokenAddress?: `0x${string}` | null;
 }
@@ -43,7 +45,13 @@ const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?:
   applyFallbackTokenIcon(event.currentTarget, address, symbol);
 };
 
-const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps) => {
+const TokenList = ({
+  onSwap,
+  onSwapToken,
+  isTokenSwappable,
+  tokenOptions,
+  wrappedTokenAddress,
+}: TokenListProps) => {
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [balancesByTokenKey, setBalancesByTokenKey] = useState<Record<string, number>>({});
@@ -183,6 +191,14 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
     [balancesByTokenKey, change24h, portfolioTokenOptions, reefBalance, reefPrice, wrappedTokenAddress],
   );
 
+  const tokenOptionById = useMemo(() => {
+    const byId = new Map<string, TokenOption>();
+    portfolioTokenOptions.forEach((token) => {
+      byId.set(tokenKey(token), token);
+    });
+    return byId;
+  }, [portfolioTokenOptions]);
+
   const visibleTokens = useMemo(() => {
     const sorted = [...tokens].sort((a, b) => (b.usdValue - a.usdValue) || (b.balance - a.balance) || a.symbol.localeCompare(b.symbol));
     const withBalance = sorted.filter((token) => token.balance > 0);
@@ -269,76 +285,94 @@ const TokenList = ({ onSwap, tokenOptions, wrappedTokenAddress }: TokenListProps
       <Card className="bg-transparent rounded-2xl shadow-none border-0 overflow-hidden">
         <div className="space-y-2">
           {pagedTokens.map((token) => (
-            <div
-              key={token.id}
-              className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]"
-            >
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 flex items-center justify-center">
-                  {token.isNative ? (
-                    <UiKit.ReefIcon className="h-10 w-10 text-[#7a3bbd]" />
-                  ) : (
-                    <img
-                      src={resolveTokenIconUrl({ address: token.address, symbol: token.symbol, iconUrl: token.iconUrl })}
-                      alt={`${token.symbol} icon`}
-                      className="h-10 w-10 rounded-full object-cover"
-                      onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
-                    />
-                  )}
-                </div>
-                <div>
-                  <div className="text-lg font-semibold text-[#1b1530] uppercase">{token.symbol}</div>
-                  <div className="text-base font-medium text-[#1b1530]">
-                    {formatPrice(token.price)}
+            (() => {
+              const tokenOption = tokenOptionById.get(token.id);
+              const canSwapThisToken = Boolean(
+                tokenOption &&
+                (isTokenSwappable ? isTokenSwappable(tokenOption) : (onSwapToken || onSwap)),
+              );
+
+              return (
+                <div
+                  key={token.id}
+                  className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm border border-[#ebe6f4] w-[92%]"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 flex items-center justify-center">
+                      {token.isNative ? (
+                        <UiKit.ReefIcon className="h-10 w-10 text-[#7a3bbd]" />
+                      ) : (
+                        <img
+                          src={resolveTokenIconUrl({ address: token.address, symbol: token.symbol, iconUrl: token.iconUrl })}
+                          alt={`${token.symbol} icon`}
+                          className="h-10 w-10 rounded-full object-cover"
+                          onError={(event) => handleTokenIconError(event, token.address, token.symbol)}
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold text-[#1b1530] uppercase">{token.symbol}</div>
+                      <div className="text-base font-medium text-[#1b1530]">
+                        {formatPrice(token.price)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-5">
+                    <div className="text-right">
+                      {(isBalanceLoading || isTokenBalancesLoading) && balancesByTokenKey[token.id] === undefined ? (
+                        <div className="flex items-center gap-1 justify-end">
+                          {[0, 1, 2, 3].map((i) => (
+                            <div
+                              key={i}
+                              className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-[#a93185] to-[#5d3bad]"
+                              style={{ animation: `bounce-dot 1s ease-in-out ${i * 0.15}s infinite` }}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xl font-semibold bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent">
+                            {showBalances ? `$${formatNumber(token.usdValue)}` : '••••••'}
+                          </p>
+                          <p className="text-sm font-medium text-[#1b1530]">
+                            {showBalances ? `${formatTokenBalance(token.balance)} ${token.symbol}` : '••••••'}
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {onSwap || onSwapToken ? (
+                        <UiKit.Button
+                          text="Swap"
+                          icon={faArrowsRotate}
+                          size="small"
+                          disabled={!canSwapThisToken}
+                          onClick={() => {
+                            if (!canSwapThisToken || !tokenOption) return;
+                            if (onSwapToken) {
+                              onSwapToken(tokenOption);
+                              return;
+                            }
+                            onSwap?.();
+                          }}
+                          className="h-9 rounded-[12px] px-6"
+                        />
+                      ) : null}
+                      <Button
+                        size="sm"
+                        className="rounded-[12px] px-6 py-5 text-white bg-[#8f2fb4] shadow-md hover:bg-[#7d29a0] gap-2"
+                        onClick={() => handleSend(token)}
+                      >
+                        <FaPaperPlane className="h-4 w-4" />
+                        Send
+                      </Button>
+                    </div>
                   </div>
                 </div>
-              </div>
-
-              <div className="flex items-center gap-5">
-                <div className="text-right">
-                  {(isBalanceLoading || isTokenBalancesLoading) && balancesByTokenKey[token.id] === undefined ? (
-                    <div className="flex items-center gap-1 justify-end">
-                      {[0, 1, 2, 3].map((i) => (
-                        <div
-                          key={i}
-                          className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-[#a93185] to-[#5d3bad]"
-                          style={{ animation: `bounce-dot 1s ease-in-out ${i * 0.15}s infinite` }}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-xl font-semibold bg-gradient-to-r from-[#a93185] to-[#5d3bad] bg-clip-text text-transparent">
-                        {showBalances ? `$${formatNumber(token.usdValue)}` : '••••••'}
-                      </p>
-                      <p className="text-sm font-medium text-[#1b1530]">
-                        {showBalances ? `${formatTokenBalance(token.balance)} ${token.symbol}` : '••••••'}
-                      </p>
-                    </>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {onSwap ? (
-                    <UiKit.Button
-                      text="Swap"
-                      icon={faArrowsRotate}
-                      size="small"
-                      onClick={onSwap}
-                      className="h-9 rounded-[12px] px-6"
-                    />
-                  ) : null}
-                  <Button
-                    size="sm"
-                    className="rounded-[12px] px-6 py-5 text-white bg-[#8f2fb4] shadow-md hover:bg-[#7d29a0] gap-2"
-                    onClick={() => handleSend(token)}
-                  >
-                    <FaPaperPlane className="h-4 w-4" />
-                    Send
-                  </Button>
-                </div>
-              </div>
-            </div>
+              );
+            })()
           ))}
           {pagedTokens.length === 0 ? (
             <div className="rounded-2xl bg-white px-4 py-6 text-sm text-[#8e899c] shadow-sm border border-[#ebe6f4] w-[92%]">

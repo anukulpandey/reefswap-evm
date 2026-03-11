@@ -6,9 +6,9 @@ const defaults = {
   subgraphUrl: 'http://localhost:8000/subgraphs/name/uniswap-v2-localhost',
   chainId: 13939,
   explorerUrl: 'https://reefscan.com',
-  wrappedReef: '0x1C2415Fd6Bc4dD007D28f050eD892C449734c238',
-  factory: '0x3a7984F200a950aEB56C74840b261e60d50A81E4',
-  router: '0xc3F98fd71ec21f5D699a2b406317aFebfc90A0F5',
+  wrappedReef: '0x3C2BA92EAFAbA6A5aC21502D8C55d3A33950f7A6',
+  factory: '0xDAb89107eaF290312fd8e80463A6a9Ec3D428F4A',
+  router: '0xa3Cab0B7288fA4CAe22CcD8B1a80c4bFaDe27664',
 };
 
 const env = import.meta.env;
