@@ -31,6 +31,7 @@ import { type SubgraphPair } from './lib/subgraph';
 const MAX_APPROVAL = (2n ** 256n) - 1n;
 const DEFAULT_SLIPPAGE = '1.0';
 const TX_DEADLINE_SECONDS = 60 * 20;
+const MAX_FACTORY_PAIRS_SCAN = 500;
 const AMOUNT_PRESETS = [0, 25, 50, 100] as const;
 const SLIPPAGE_PRESETS = ['0.3', '0.8', '1.0', '2.0'] as const;
 const REEF_USD_PRICE = 0.000073;
@@ -397,6 +398,17 @@ const App = () => {
   const [isApprovingNewPosition, setIsApprovingNewPosition] = useState(false);
   const [isCreatingNewPosition, setIsCreatingNewPosition] = useState(false);
   const [poolPositionBalances, setPoolPositionBalances] = useState<Record<string, { balance: bigint; totalSupply: bigint }>>({});
+  const [poolPositionPairDetails, setPoolPositionPairDetails] = useState<Record<string, {
+    token0: Address;
+    token1: Address;
+    token0Symbol: string;
+    token1Symbol: string;
+    token0Decimals: number;
+    token1Decimals: number;
+    reserve0: bigint;
+    reserve1: bigint;
+  }>>({});
+  const [selectedPoolOnChain, setSelectedPoolOnChain] = useState<SubgraphPair | null>(null);
   const [isRefreshingPoolPositions, setIsRefreshingPoolPositions] = useState(false);
   const swapCardRef = useRef<HTMLDivElement | null>(null);
   const poolPositionRequestIdRef = useRef(0);
@@ -509,22 +521,27 @@ const App = () => {
   }, [walletTokens]);
 
   useEffect(() => {
-    if (!subgraphPairs.length) {
-      setSelectedPoolId(null);
-      return;
-    }
-
     setSelectedPoolId((current) => {
-      const poolRefFromLocation = typeof window === 'undefined' ? null : parseRouteLocation(window.location).poolRef;
-      const resolvedFromLocation = resolvePoolIdFromRef(poolRefFromLocation, subgraphPairs);
-      if (resolvedFromLocation) return resolvedFromLocation;
+      const { route, poolRef: poolRefFromLocation } = typeof window === 'undefined'
+        ? { route: activeRoute, poolRef: null }
+        : parseRouteLocation(window.location);
+      const isPoolRoute = route === 'pool-detail' || route === 'chart';
+
+      if (isPoolRoute && poolRefFromLocation) {
+        const resolvedFromLocation = resolvePoolIdFromRef(poolRefFromLocation, subgraphPairs);
+        if (resolvedFromLocation) return resolvedFromLocation;
+        if (isAddress(poolRefFromLocation)) return getAddress(poolRefFromLocation);
+        return poolRefFromLocation;
+      }
+
+      if (!subgraphPairs.length) return null;
 
       const resolvedCurrent = resolvePoolIdFromRef(current, subgraphPairs);
       if (resolvedCurrent) return resolvedCurrent;
 
       return subgraphPairs[0].id;
     });
-  }, [subgraphPairs]);
+  }, [activeRoute, subgraphPairs]);
 
   useEffect(() => {
     if (routerWrappedTokenSource === 'loading') return;
@@ -2455,10 +2472,173 @@ const App = () => {
     />
   );
 
-  const selectedPool = useMemo(
-    () => subgraphPairs.find((pair) => pair.id.toLowerCase() === (selectedPoolId || '').toLowerCase()) || subgraphPairs[0] || null,
-    [selectedPoolId, subgraphPairs],
-  );
+  useEffect(() => {
+    const isPoolRoute = activeRoute === 'pool-detail' || activeRoute === 'chart';
+    const normalizedSelectedPoolId = selectedPoolId?.toLowerCase() || '';
+
+    if (!isPoolRoute || !selectedPoolId || !isAddress(selectedPoolId) || !publicClient) {
+      setSelectedPoolOnChain(null);
+      return;
+    }
+
+    const hasIndexedPool = subgraphPairs.some((pair) => pair.id.toLowerCase() === normalizedSelectedPoolId);
+    if (hasIndexedPool) {
+      setSelectedPoolOnChain(null);
+      return;
+    }
+
+    let cancelled = false;
+    const selectedPairAddress = getAddress(selectedPoolId);
+
+    const loadOnChainPair = async () => {
+      try {
+        const pairCode = await publicClient.getCode({ address: selectedPairAddress }).catch(() => '0x');
+        if (!pairCode || pairCode === '0x') {
+          if (!cancelled) setSelectedPoolOnChain(null);
+          return;
+        }
+
+        const [token0Address, token1Address, reserves] = await Promise.all([
+          publicClient.readContract({
+            address: selectedPairAddress,
+            abi: reefswapPairAbi,
+            functionName: 'token0',
+          }).catch(() => null),
+          publicClient.readContract({
+            address: selectedPairAddress,
+            abi: reefswapPairAbi,
+            functionName: 'token1',
+          }).catch(() => null),
+          publicClient.readContract({
+            address: selectedPairAddress,
+            abi: reefswapPairAbi,
+            functionName: 'getReserves',
+          }).catch(() => null),
+        ]);
+
+        if (!token0Address || !token1Address || !reserves) {
+          if (!cancelled) setSelectedPoolOnChain(null);
+          return;
+        }
+
+        const token0 = getAddress(token0Address);
+        const token1 = getAddress(token1Address);
+        const [token0SymbolRaw, token1SymbolRaw, token0NameRaw, token1NameRaw, token0DecimalsRaw, token1DecimalsRaw] = await Promise.all([
+          publicClient.readContract({
+            address: token0,
+            abi: erc20Abi,
+            functionName: 'symbol',
+          }).catch(() => shortAddress(token0)),
+          publicClient.readContract({
+            address: token1,
+            abi: erc20Abi,
+            functionName: 'symbol',
+          }).catch(() => shortAddress(token1)),
+          publicClient.readContract({
+            address: token0,
+            abi: erc20Abi,
+            functionName: 'name',
+          }).catch(() => 'Token 0'),
+          publicClient.readContract({
+            address: token1,
+            abi: erc20Abi,
+            functionName: 'name',
+          }).catch(() => 'Token 1'),
+          publicClient.readContract({
+            address: token0,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          }).catch(() => 18),
+          publicClient.readContract({
+            address: token1,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          }).catch(() => 18),
+        ]);
+
+        const token0Decimals = Number(token0DecimalsRaw);
+        const token1Decimals = Number(token1DecimalsRaw);
+        const token0SafeDecimals = Number.isInteger(token0Decimals) ? token0Decimals : 18;
+        const token1SafeDecimals = Number.isInteger(token1Decimals) ? token1Decimals : 18;
+
+        const reserve0 = asNumber(formatUnits(reserves[0], token0SafeDecimals));
+        const reserve1 = asNumber(formatUnits(reserves[1], token1SafeDecimals));
+        const token0Price = reserve0 > 0 ? reserve1 / reserve0 : 0;
+        const token1Price = reserve1 > 0 ? reserve0 / reserve1 : 0;
+        const token0Symbol = String(token0SymbolRaw || '').trim() || shortAddress(token0);
+        const token1Symbol = String(token1SymbolRaw || '').trim() || shortAddress(token1);
+        const token0IsCanonicalReef = sameAddress(token0, wrappedReefAddress) || isReefLikeSymbol(token0Symbol);
+        const token1IsCanonicalReef = sameAddress(token1, wrappedReefAddress) || isReefLikeSymbol(token1Symbol);
+        const reefUsd = liveReefUsdPrice > 0 ? liveReefUsdPrice : REEF_USD_PRICE;
+        const reserveUsd = token0IsCanonicalReef
+          ? reserve0 * reefUsd * 2
+          : token1IsCanonicalReef
+            ? reserve1 * reefUsd * 2
+            : 0;
+        const nowTimestamp = Math.trunc(Date.now() / 1000).toString();
+
+        const syntheticPair: SubgraphPair = {
+          id: selectedPairAddress,
+          createdAtBlockNumber: '0',
+          createdAtTimestamp: nowTimestamp,
+          token0: {
+            id: token0,
+            symbol: token0Symbol,
+            name: String(token0NameRaw || token0Symbol),
+            decimals: token0SafeDecimals.toString(),
+          },
+          token1: {
+            id: token1,
+            symbol: token1Symbol,
+            name: String(token1NameRaw || token1Symbol),
+            decimals: token1SafeDecimals.toString(),
+          },
+          reserve0: formatUnits(reserves[0], token0SafeDecimals),
+          reserve1: formatUnits(reserves[1], token1SafeDecimals),
+          reserveUSD: String(Math.max(0, reserveUsd)),
+          volumeToken0: '0',
+          volumeToken1: '0',
+          volumeUSD: '0',
+          untrackedVolumeUSD: '0',
+          txCount: '0',
+          token0Price: Number.isFinite(token0Price) ? String(Math.max(0, token0Price)) : '0',
+          token1Price: Number.isFinite(token1Price) ? String(Math.max(0, token1Price)) : '0',
+        };
+
+        if (!cancelled) {
+          setSelectedPoolOnChain(syntheticPair);
+        }
+      } catch {
+        if (!cancelled) {
+          setSelectedPoolOnChain(null);
+        }
+      }
+    };
+
+    loadOnChainPair().catch(() => {
+      if (!cancelled) setSelectedPoolOnChain(null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoute, liveReefUsdPrice, publicClient, selectedPoolId, subgraphPairs, wrappedReefAddress]);
+
+  const selectedPool = useMemo(() => {
+    const normalizedSelectedPoolId = (selectedPoolId || '').toLowerCase();
+    const indexedPool = subgraphPairs.find((pair) => pair.id.toLowerCase() === normalizedSelectedPoolId);
+    if (indexedPool) return indexedPool;
+
+    const isPoolRoute = activeRoute === 'pool-detail' || activeRoute === 'chart';
+    if (isPoolRoute && selectedPoolId) {
+      if (selectedPoolOnChain && selectedPoolOnChain.id.toLowerCase() === normalizedSelectedPoolId) {
+        return selectedPoolOnChain;
+      }
+      return null;
+    }
+
+    return subgraphPairs[0] || null;
+  }, [activeRoute, selectedPoolId, selectedPoolOnChain, subgraphPairs]);
   const reefUsdPrice = liveReefUsdPrice > 0 ? liveReefUsdPrice : REEF_USD_PRICE;
   const getPairTokenDisplaySymbol = useCallback((token: { id: string; symbol: string }): string => (
     sameAddress(token.id, wrappedReefAddress) || token.symbol.toUpperCase() === 'WREEF' ? 'REEF' : token.symbol
@@ -2584,37 +2764,78 @@ const App = () => {
       totalLiquidityUsd: factoryLiquidityUsd > 0 ? factoryLiquidityUsd : pairsLiquidityFallback,
     };
   }, [getPairUsdMetrics, subgraphFactory?.totalLiquidityUSD, subgraphFactory?.totalVolumeUSD, subgraphPairs]);
-  const positionPairIdKey = useMemo(() => (
+  const subgraphPairAddresses = useMemo(() => (
     subgraphPairs
       .filter((pair) => isAddress(pair.id))
-      .map((pair) => pair.id.toLowerCase())
-      .join('|')
+      .map((pair) => ({ id: pair.id.toLowerCase(), address: getAddress(pair.id) }))
   ), [subgraphPairs]);
-  const positionPairAddresses = useMemo(() => (
-    positionPairIdKey
-      ? positionPairIdKey.split('|').map((id) => ({ id, address: getAddress(id) }))
-      : []
-  ), [positionPairIdKey]);
+  const subgraphPairIdSet = useMemo(() => (
+    new Set(subgraphPairAddresses.map((pair) => pair.id))
+  ), [subgraphPairAddresses]);
 
   const refreshPoolPositions = useCallback(async () => {
     const requestId = poolPositionRequestIdRef.current + 1;
     poolPositionRequestIdRef.current = requestId;
 
-    if (!publicClient || !address || !isConnected || !positionPairAddresses.length) {
+    if (!publicClient || !address || !isConnected) {
       if (requestId === poolPositionRequestIdRef.current) {
         setPoolPositionBalances({});
+        setPoolPositionPairDetails({});
         setIsRefreshingPoolPositions(false);
       }
       return;
     }
 
     setIsRefreshingPoolPositions(true);
+    const candidatePairAddresses = new Map<string, Address>();
+    subgraphPairAddresses.forEach(({ id, address: pairAddress }) => {
+      candidatePairAddresses.set(id, pairAddress);
+    });
+
     const nextPositions: Record<string, { balance: bigint; totalSupply: bigint }> = {};
+    const nextPairDetails: Record<string, {
+      token0: Address;
+      token1: Address;
+      token0Symbol: string;
+      token1Symbol: string;
+      token0Decimals: number;
+      token1Decimals: number;
+      reserve0: bigint;
+      reserve1: bigint;
+    }> = {};
     const batchSize = 20;
 
     try {
-      for (let index = 0; index < positionPairAddresses.length; index += batchSize) {
-        const chunk = positionPairAddresses.slice(index, index + batchSize);
+      const factoryCode = await publicClient.getCode({ address: factoryAddress }).catch(() => '0x');
+      if (factoryCode && factoryCode !== '0x') {
+        const rawPairsLength = await publicClient.readContract({
+          address: factoryAddress,
+          abi: reefswapFactoryAbi,
+          functionName: 'allPairsLength',
+        }).catch(() => 0n);
+        const totalPairs = Math.min(Number(rawPairsLength), MAX_FACTORY_PAIRS_SCAN);
+
+        for (let index = 0; index < totalPairs; index += 1) {
+          const pairAddress = await publicClient.readContract({
+            address: factoryAddress,
+            abi: reefswapFactoryAbi,
+            functionName: 'allPairs',
+            args: [BigInt(index)],
+          }).catch(() => '0x0000000000000000000000000000000000000000' as Address);
+
+          if (!pairAddress || sameAddress(pairAddress, '0x0000000000000000000000000000000000000000')) continue;
+          const normalized = getAddress(pairAddress);
+          candidatePairAddresses.set(normalized.toLowerCase(), normalized);
+        }
+      }
+
+      const allPairAddresses = Array.from(candidatePairAddresses.entries()).map(([id, pairAddress]) => ({
+        id,
+        address: pairAddress,
+      }));
+
+      for (let index = 0; index < allPairAddresses.length; index += batchSize) {
+        const chunk = allPairAddresses.slice(index, index + batchSize);
         const chunkResults = await Promise.all(
           chunk.map(async ({ id, address: pairAddress }) => {
             try {
@@ -2632,6 +2853,65 @@ const App = () => {
                 }).catch(() => 0n),
               ]);
               if (balance <= 0n) return null;
+
+              if (!subgraphPairIdSet.has(id)) {
+                const [token0Address, token1Address, reserves] = await Promise.all([
+                  publicClient.readContract({
+                    address: pairAddress,
+                    abi: reefswapPairAbi,
+                    functionName: 'token0',
+                  }).catch(() => null),
+                  publicClient.readContract({
+                    address: pairAddress,
+                    abi: reefswapPairAbi,
+                    functionName: 'token1',
+                  }).catch(() => null),
+                  publicClient.readContract({
+                    address: pairAddress,
+                    abi: reefswapPairAbi,
+                    functionName: 'getReserves',
+                  }).catch(() => null),
+                ]);
+
+                if (token0Address && token1Address && reserves) {
+                  const token0 = getAddress(token0Address);
+                  const token1 = getAddress(token1Address);
+                  const [token0SymbolRaw, token1SymbolRaw, token0DecimalsRaw, token1DecimalsRaw] = await Promise.all([
+                    publicClient.readContract({
+                      address: token0,
+                      abi: erc20Abi,
+                      functionName: 'symbol',
+                    }).catch(() => shortAddress(token0)),
+                    publicClient.readContract({
+                      address: token1,
+                      abi: erc20Abi,
+                      functionName: 'symbol',
+                    }).catch(() => shortAddress(token1)),
+                    publicClient.readContract({
+                      address: token0,
+                      abi: erc20Abi,
+                      functionName: 'decimals',
+                    }).catch(() => 18),
+                    publicClient.readContract({
+                      address: token1,
+                      abi: erc20Abi,
+                      functionName: 'decimals',
+                    }).catch(() => 18),
+                  ]);
+
+                  nextPairDetails[id] = {
+                    token0,
+                    token1,
+                    token0Symbol: String(token0SymbolRaw || '').toUpperCase() || 'TOKEN0',
+                    token1Symbol: String(token1SymbolRaw || '').toUpperCase() || 'TOKEN1',
+                    token0Decimals: Number(token0DecimalsRaw),
+                    token1Decimals: Number(token1DecimalsRaw),
+                    reserve0: reserves[0],
+                    reserve1: reserves[1],
+                  };
+                }
+              }
+
               return [id, { balance, totalSupply }] as const;
             } catch {
               return null;
@@ -2652,12 +2932,13 @@ const App = () => {
 
       if (requestId !== poolPositionRequestIdRef.current) return;
       setPoolPositionBalances(nextPositions);
+      setPoolPositionPairDetails(nextPairDetails);
     } finally {
       if (requestId === poolPositionRequestIdRef.current) {
         setIsRefreshingPoolPositions(false);
       }
     }
-  }, [address, isConnected, positionPairAddresses, publicClient]);
+  }, [address, factoryAddress, isConnected, publicClient, subgraphPairAddresses, subgraphPairIdSet]);
 
   useEffect(() => {
     if (activeRoute !== 'pools') return;
@@ -2666,40 +2947,87 @@ const App = () => {
     });
   }, [activeRoute, refreshPoolPositions]);
 
-  const userPoolPositions = useMemo<UserPoolPosition[]>(() => (
-    subgraphPairs
-      .map((pair) => {
-        const key = pair.id.toLowerCase();
-        const snapshot = poolPositionBalances[key];
+  const userPoolPositions = useMemo<UserPoolPosition[]>(() => {
+    const subgraphById = new Map<string, SubgraphPair>();
+    subgraphPairs.forEach((pair) => {
+      if (!isAddress(pair.id)) return;
+      subgraphById.set(pair.id.toLowerCase(), pair);
+    });
+
+    return Object.entries(poolPositionBalances)
+      .map(([pairId, snapshot]) => {
         if (!snapshot || snapshot.balance <= 0n) return null;
 
-        const token0Symbol = getPairTokenDisplaySymbol(pair.token0);
-        const token1Symbol = getPairTokenDisplaySymbol(pair.token1);
         const lpShare = snapshot.totalSupply > 0n
           ? Number((snapshot.balance * 1_000_000n) / snapshot.totalSupply) / 1_000_000
           : 0;
 
-        const token0Amount = Math.max(0, asNumber(pair.reserve0) * lpShare);
-        const token1Amount = Math.max(0, asNumber(pair.reserve1) * lpShare);
-        const usdValue = Math.max(0, getPairUsdMetrics(pair).reserveUsd * lpShare);
+        const indexedPair = subgraphById.get(pairId.toLowerCase());
+        if (indexedPair) {
+          const token0Symbol = getPairTokenDisplaySymbol(indexedPair.token0);
+          const token1Symbol = getPairTokenDisplaySymbol(indexedPair.token1);
+          const token0Amount = Math.max(0, asNumber(indexedPair.reserve0) * lpShare);
+          const token1Amount = Math.max(0, asNumber(indexedPair.reserve1) * lpShare);
+          const usdValue = Math.max(0, getPairUsdMetrics(indexedPair).reserveUsd * lpShare);
+
+          return {
+            pairId: indexedPair.id,
+            token0Symbol,
+            token1Symbol,
+            token0IsReef: isPairTokenReef(indexedPair.token0),
+            token1IsReef: isPairTokenReef(indexedPair.token1),
+            lpBalance: snapshot.balance,
+            lpTotalSupply: snapshot.totalSupply,
+            lpShare,
+            usdValue,
+            token0Amount,
+            token1Amount,
+          } satisfies UserPoolPosition;
+        }
+
+        const onChainPair = poolPositionPairDetails[pairId.toLowerCase()];
+        if (!onChainPair) return null;
+
+        const token0IsReef = sameAddress(onChainPair.token0, wrappedReefAddress) || isReefLikeSymbol(onChainPair.token0Symbol);
+        const token1IsReef = sameAddress(onChainPair.token1, wrappedReefAddress) || isReefLikeSymbol(onChainPair.token1Symbol);
+        const token0Symbol = token0IsReef ? 'REEF' : onChainPair.token0Symbol;
+        const token1Symbol = token1IsReef ? 'REEF' : onChainPair.token1Symbol;
+
+        const reserve0 = Math.max(0, asNumber(formatUnits(onChainPair.reserve0, onChainPair.token0Decimals)));
+        const reserve1 = Math.max(0, asNumber(formatUnits(onChainPair.reserve1, onChainPair.token1Decimals)));
+        const token0Amount = reserve0 * lpShare;
+        const token1Amount = reserve1 * lpShare;
+
+        let reserveUsd = 0;
+        if (token0IsReef) reserveUsd = reserve0 * reefUsdPrice * 2;
+        else if (token1IsReef) reserveUsd = reserve1 * reefUsdPrice * 2;
 
         return {
-          pairId: pair.id,
+          pairId,
           token0Symbol,
           token1Symbol,
-          token0IsReef: isPairTokenReef(pair.token0),
-          token1IsReef: isPairTokenReef(pair.token1),
+          token0IsReef,
+          token1IsReef,
           lpBalance: snapshot.balance,
           lpTotalSupply: snapshot.totalSupply,
           lpShare,
-          usdValue,
-          token0Amount,
-          token1Amount,
+          usdValue: Math.max(0, reserveUsd * lpShare),
+          token0Amount: Math.max(0, token0Amount),
+          token1Amount: Math.max(0, token1Amount),
         } satisfies UserPoolPosition;
       })
       .filter((item): item is UserPoolPosition => Boolean(item))
-      .sort((a, b) => b.usdValue - a.usdValue)
-  ), [getPairTokenDisplaySymbol, getPairUsdMetrics, isPairTokenReef, poolPositionBalances, subgraphPairs]);
+      .sort((a, b) => b.usdValue - a.usdValue);
+  }, [
+    getPairTokenDisplaySymbol,
+    getPairUsdMetrics,
+    isPairTokenReef,
+    poolPositionBalances,
+    poolPositionPairDetails,
+    reefUsdPrice,
+    subgraphPairs,
+    wrappedReefAddress,
+  ]);
 
   const closeNewPositionModal = useCallback(() => {
     setIsNewPositionOpen(false);
