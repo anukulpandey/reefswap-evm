@@ -16,6 +16,8 @@ interface SendModalProps {
   token: Token | null;
 }
 
+const DECIMAL_INPUT_REGEX = /^\d*\.?\d*$/;
+
 const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, symbol?: string | null) => {
   if (img.dataset.fallbackApplied === 'true') return;
   img.dataset.fallbackApplied = 'true';
@@ -24,6 +26,47 @@ const applyFallbackTokenIcon = (img: HTMLImageElement, address?: string | null, 
 
 const handleTokenIconError = (event: SyntheticEvent<HTMLImageElement>, address?: string | null, symbol?: string | null) => {
   applyFallbackTokenIcon(event.currentTarget, address, symbol);
+};
+
+const expandScientificNotation = (value: string): string => {
+  if (!/[eE]/.test(value)) return value;
+
+  const trimmed = value.trim();
+  const sign = trimmed.startsWith('-') ? '-' : '';
+  const unsigned = sign ? trimmed.slice(1) : trimmed.startsWith('+') ? trimmed.slice(1) : trimmed;
+  const [mantissa = '', exponentPart = ''] = unsigned.toLowerCase().split('e');
+  const exponent = Number.parseInt(exponentPart, 10);
+
+  if (!mantissa || Number.isNaN(exponent)) return value;
+
+  const [whole = '0', fraction = ''] = mantissa.split('.');
+  if (!/^\d+$/.test(whole) || !/^\d*$/.test(fraction)) return value;
+
+  const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, '');
+  if (digits.length === 0) return '0';
+
+  const decimalIndex = whole.length + exponent;
+  if (decimalIndex <= 0) {
+    return `${sign}0.${'0'.repeat(-decimalIndex)}${digits}`;
+  }
+  if (decimalIndex >= digits.length) {
+    return `${sign}${digits}${'0'.repeat(decimalIndex - digits.length)}`;
+  }
+  return `${sign}${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
+};
+
+const normalizeDecimalInput = (raw: string | number, decimals: number): string => {
+  const asText = String(raw).trim().replace(/,/g, '');
+  if (asText === '') return '';
+
+  let normalized = expandScientificNotation(asText);
+  if (normalized.startsWith('.')) normalized = `0${normalized}`;
+  if (!DECIMAL_INPUT_REGEX.test(normalized)) return '';
+
+  const [wholePart = '0', fractionPart = ''] = normalized.split('.');
+  const whole = wholePart.replace(/^0+(?=\d)/, '') || '0';
+  const fraction = fractionPart.slice(0, Math.max(0, decimals));
+  return fraction.length > 0 ? `${whole}.${fraction}` : whole;
 };
 
 const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
@@ -89,7 +132,9 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
 
     try {
       const decimals = token.decimals ?? 18;
-      const value = parseUnits(amount, decimals);
+      const normalizedAmount = normalizeDecimalInput(amount, decimals).replace(/\.$/, '');
+      if (!normalizedAmount) return;
+      const value = parseUnits(normalizedAmount, decimals);
 
       if (token.isNative) {
         const hash = await sendTransactionAsync({
@@ -129,7 +174,22 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
   };
 
   const handleMax = () => {
-    setAmount(token?.balance.toString() || '0');
+    if (!token) return;
+    const decimals = token.decimals ?? 18;
+    setAmount(normalizeDecimalInput(token.balance, decimals));
+  };
+
+  const handleAmountChange = (nextRaw: string) => {
+    if (!token) return;
+    if (nextRaw.trim() === '') {
+      setAmount('');
+      return;
+    }
+
+    const decimals = token.decimals ?? 18;
+    const normalized = normalizeDecimalInput(nextRaw, decimals);
+    if (!normalized) return;
+    setAmount(normalized);
   };
 
   if (!token) return null;
@@ -187,10 +247,11 @@ const SendModal = ({ isOpen, onClose, token }: SendModalProps) => {
             </div>
             <div className="flex items-center gap-3">
               <input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 placeholder="0.00"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => handleAmountChange(e.target.value)}
                 disabled={isProcessing}
                 className={`flex-1 bg-transparent text-2xl font-semibold placeholder:text-[#c5c0d0] outline-none disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none ${hasAmountError ? 'text-red-500' : 'text-[#1b1530]'}`}
               />
