@@ -8,7 +8,8 @@ import {
   useSwitchChain,
   useWalletClient,
 } from 'wagmi';
-import { ArrowUpDown, ChevronDown, Coins, Search, Upload } from 'lucide-react';
+import { ChevronDown, Coins, Search, Upload } from 'lucide-react';
+import { faArrowsRotate } from '@fortawesome/free-solid-svg-icons';
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import { erc20Abi, reefswapFactoryAbi, reefswapPairAbi, reefswapRouterAbi, wrappedReefAbi } from './lib/abi';
 import { contracts, reefChain } from './lib/config';
@@ -2163,253 +2164,149 @@ const App = () => {
   );
 
   const swapStageView = (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 40,
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        backgroundColor: '#ece9f4',
-        paddingTop: 96,
-        paddingBottom: 24,
-        paddingLeft: 16,
-        paddingRight: 16,
-        overflowY: 'auto',
-      }}
-    >
-      <div
-        ref={swapCardRef}
-        style={{
-          width: '100%',
-          maxWidth: 560,
-          marginTop: 16,
-          backgroundColor: 'hsl(var(--bg--h, 252), var(--bg--s, 35%), 97%)',
-          borderRadius: 24,
-          padding: '28px 24px 24px',
-          boxShadow: '0 8px 48px rgba(93, 59, 173, 0.18)',
-        }}
-      >
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
-          <h2 style={{ fontSize: 26, fontWeight: 700, color: 'var(--text)', margin: 0 }}>Swap</h2>
-        </div>
-
-        {/* FROM token row */}
-        <div
-          style={{
-            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
-            borderRadius: 16, padding: '16px 20px', marginBottom: 4,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
-            <div style={{ width: 48, height: 48, flexShrink: 0 }}>
-              {tokenIn.isNative || isWrappedReefToken(tokenIn) ? (
-                <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
-                </div>
-              ) : (
-                <img
-                  src={resolveTokenIconUrl({ address: tokenIn.address, symbol: tokenIn.symbol, iconUrl: tokenIn.iconUrl || null })}
-                  alt={`${tokenInDisplaySymbol} icon`}
-                  style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }}
-                  onError={(event) => handleTokenIconError(event, tokenIn.address, tokenIn.symbol)}
-                />
-              )}
+    <div className="swap-route-overlay">
+      <div ref={swapCardRef} className="uik-pool-actions swap-route-actions">
+        <div className="uik-pool-actions__tokens swap-route-actions__tokens">
+          <div className={`uik-pool-actions-token ${openTokenMenu === 'in' ? 'uik-pool-actions-token--focused' : ''}`}>
+            <div className="uik-pool-actions-token__token">
+              <div className={`uik-pool-actions-token__image pool-token-avatar ${tokenIn.isNative || isWrappedReefToken(tokenIn) ? 'pool-token-avatar--reef' : ''}`}>
+                {tokenIn.isNative || isWrappedReefToken(tokenIn) ? (
+                  <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
+                ) : (
+                  <img
+                    src={resolveTokenIconUrl({ address: tokenIn.address, symbol: tokenIn.symbol, iconUrl: tokenIn.iconUrl || null })}
+                    alt={`${tokenInDisplaySymbol} icon`}
+                    className="pool-token-avatar__img"
+                    onError={(event) => handleTokenIconError(event, tokenIn.address, tokenIn.symbol)}
+                  />
+                )}
+              </div>
+              <div className="uik-pool-actions-token__info swap-route-token-select">
+                <button type="button" className="swap-route-token-select-btn" onClick={() => toggleTokenMenu('in')}>
+                  <span className="uik-pool-actions-token__symbol">{tokenInDisplaySymbol}</span>
+                  <ChevronDown size={16} />
+                </button>
+                <div className="uik-pool-actions-token__amount">{formattedBalanceIn} {tokenInDisplaySymbol}</div>
+              </div>
             </div>
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                onClick={() => toggleTokenMenu('in')}
-                style={{
-                  border: '1px solid #d9caec',
-                  borderRadius: 10,
-                  background: '#f7f2ff',
-                  color: 'var(--text)',
-                  fontWeight: 700,
-                  fontSize: 18,
-                  lineHeight: 1.1,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 9px',
-                  cursor: 'pointer',
-                }}
-              >
-                <span>{tokenInDisplaySymbol}</span>
-                <ChevronDown size={15} color="#83789a" />
+            <div className="uik-pool-actions-token__value">
+              <input
+                className="swap-route-token-input"
+                value={amountInText}
+                onChange={(event) => setAmountInText(normalizeInput(event.target.value))}
+                inputMode="decimal"
+                placeholder="0.0"
+              />
+            </div>
+          </div>
+          {openTokenMenu === 'in' ? renderTokenMenu('in') : null}
+
+          <div className="pool-actions__switch-slider-row swap-route-switch-slider-row">
+            <div className="uik-pool-actions__token-switch">
+              <button type="button" className="uik-pool-actions__token-switch-btn" aria-label="Switch assets" onClick={onSwitchTokens}>
+                <Uik.Icon icon={faArrowsRotate} />
               </button>
-              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceIn} {tokenInDisplaySymbol}</div>
+            </div>
+            <div className="uik-pool-actions__slider">
+              <Uik.Slider
+                value={amountSliderValue}
+                helpers={AMOUNT_SLIDER_HELPERS}
+                tooltip={`${amountSliderValue.toFixed(2)}%`}
+                onChange={(position: number) => setAmountByPercent(position)}
+              />
             </div>
           </div>
-          <input
-            value={amountInText}
-            onChange={(e) => setAmountInText(normalizeInput(e.target.value))}
-            inputMode="decimal"
-            placeholder="0.0"
-            style={{
-              background: 'none',
-              border: 'none',
-              outline: 'none',
-              fontSize: 24,
-              fontWeight: 600,
-              color: 'var(--text-light)',
-              textAlign: 'right',
-              width: 'clamp(160px, 38%, 240px)',
-              minWidth: 0,
-              flexShrink: 0,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          />
-        </div>
-        {openTokenMenu === 'in' ? renderTokenMenu('in') : null}
 
-        {/* Switch button + Amount slider row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 0' }}>
-          <button
-            type="button"
-            onClick={onSwitchTokens}
-            aria-label="Switch tokens"
-            style={{
-              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-              background: 'linear-gradient(135deg, #a93185, #5d3bad)',
-              border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#fff', fontSize: 20, boxShadow: '0 2px 10px rgba(93, 59, 173, 0.4)',
-            }}
-          >
-            <ArrowUpDown size={20} />
-          </button>
-          <div style={{ flex: 1 }}>
-            <Uik.Slider
-              value={amountSliderValue}
-              helpers={AMOUNT_SLIDER_HELPERS}
-              tooltip={`${amountSliderValue}%`}
-              onChange={(position: number) => setAmountByPercent(position)}
-            />
-          </div>
-        </div>
-
-        {/* TO token row */}
-        <div
-          style={{
-            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
-            borderRadius: 16, padding: '16px 20px', marginBottom: 14,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
-            <div style={{ width: 48, height: 48, flexShrink: 0 }}>
-              <div style={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b8699', fontWeight: 700, fontSize: 34, lineHeight: 1 }}>
+          <div className={`uik-pool-actions-token ${openTokenMenu === 'out' ? 'uik-pool-actions-token--focused' : ''}`}>
+            <div className="uik-pool-actions-token__token">
+              <div className={`uik-pool-actions-token__image pool-token-avatar ${tokenOut.isNative || isWrappedReefToken(tokenOut) ? 'pool-token-avatar--reef' : ''}`}>
                 {tokenOut.isNative || isWrappedReefToken(tokenOut) ? (
-                  <Uik.ReefSign style={{ width: 40, height: 40, color: '#7a3bbd' }} />
+                  <Uik.ReefIcon className="pool-token-avatar__reef-mark" />
                 ) : (
                   <img
                     src={resolveTokenIconUrl({ address: tokenOut.address, symbol: tokenOut.symbol, iconUrl: tokenOut.iconUrl || null })}
                     alt={`${tokenOutDisplaySymbol} icon`}
-                    style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }}
+                    className="pool-token-avatar__img"
                     onError={(event) => handleTokenIconError(event, tokenOut.address, tokenOut.symbol)}
                   />
                 )}
               </div>
+              <div className="uik-pool-actions-token__info swap-route-token-select">
+                <button
+                  type="button"
+                  className="swap-route-token-select-btn"
+                  disabled={!outputTokenOptions.length}
+                  onClick={() => toggleTokenMenu('out')}
+                >
+                  <span className="uik-pool-actions-token__symbol">{tokenOutDisplaySymbol}</span>
+                  <ChevronDown size={16} />
+                </button>
+                <div className="uik-pool-actions-token__amount">{formattedBalanceOut} {tokenOutDisplaySymbol}</div>
+              </div>
             </div>
-            <div style={{ position: 'relative' }}>
-              <button
-                type="button"
-                disabled={!outputTokenOptions.length}
-                onClick={() => toggleTokenMenu('out')}
-                style={{
-                  border: '1px solid #d9caec',
-                  borderRadius: 10,
-                  background: '#f7f2ff',
-                  color: 'var(--text)',
-                  fontWeight: 700,
-                  fontSize: 16,
-                  lineHeight: 1.1,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '5px 9px',
-                  cursor: outputTokenOptions.length ? 'pointer' : 'not-allowed',
-                  opacity: outputTokenOptions.length ? 1 : 0.65,
-                }}
-              >
-                <span>{tokenOutDisplaySymbol}</span>
-                <ChevronDown size={15} color="#83789a" />
-              </button>
-              <div style={{ fontSize: 13, color: 'var(--text-light)', marginTop: 2 }}>{formattedBalanceOut} {tokenOutDisplaySymbol}</div>
+            <div className="uik-pool-actions-token__value">
+              <input className="swap-route-token-input swap-route-token-input--readonly" value={amountOutText} readOnly placeholder={isQuoting ? '...' : '0.0'} />
             </div>
           </div>
-          <input
-            value={amountOutText}
-            readOnly
-            placeholder="0.0"
-            style={{
-              background: 'none',
-              border: 'none',
-              outline: 'none',
-              fontSize: 24,
-              fontWeight: 600,
-              color: 'var(--text-light)',
-              textAlign: 'right',
-              width: 'clamp(160px, 38%, 240px)',
-              minWidth: 0,
-              flexShrink: 0,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          />
-        </div>
-        {openTokenMenu === 'out' ? renderTokenMenu('out') : null}
+          {openTokenMenu === 'out' ? renderTokenMenu('out') : null}
 
-        {/* Rate / Fee / Slippage info card */}
-        <div
-          style={{
-            background: 'hsl(var(--bg--h, 252), var(--bg--s, 28%), 93%)',
-            borderRadius: 14, padding: '14px 20px', marginBottom: 14,
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>Rate</span>
-            <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 700 }}>{detailsRate}</span>
+          <div className="uik-pool-actions__summary uik-pool-actions__trade-summary">
+            <div className="uik-pool-actions__summary-item">
+              <div className="uik-pool-actions__summary-item-label">Rate</div>
+              <div className="uik-pool-actions__summary-item-value">{detailsRate}</div>
+            </div>
+            <div className="uik-pool-actions__summary-item">
+              <div className="uik-pool-actions__summary-item-label">Fee</div>
+              <div className="uik-pool-actions__summary-item-value">{isWrapPair ? '0 $' : '0.30%'}</div>
+            </div>
+            <div className="uik-pool-actions__summary-item">
+              <div className="uik-pool-actions__summary-item-label">Slippage</div>
+              <div className="uik-pool-actions__summary-item-value">{clampedSlippage.toFixed(1)}%</div>
+            </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-            <span style={{ fontSize: 14, color: 'var(--text-light)' }}>Fee</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{isWrapPair ? '0 $' : '0.30%'}</span>
+          {quoteError ? <p className="pool-actions__quote-error">{quoteError}</p> : null}
+          {!quoteError && quoteNote ? <p className="pool-actions__quote-note">{quoteNote}</p> : null}
+
+          <div className="uik-pool-actions__slider swap-route-actions__slippage-slider">
+            <Uik.Slider
+              value={slippageSliderValue}
+              steps={1}
+              helpers={SLIPPAGE_SLIDER_HELPERS}
+              tooltip={`${clampedSlippage.toFixed(1)}%`}
+              onChange={setSlippageFromSlider}
+            />
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 14, color: 'var(--text-light)' }}>Slippage</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{clampedSlippage.toFixed(1)}%</span>
-          </div>
+
+          {isWrongChain ? (
+            <Uik.Button
+              className="uik-pool-actions__cta swap-route-action-btn"
+              text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'}
+              fill
+              size="large"
+              disabled={isSwitching}
+              onClick={switchToReef}
+            />
+          ) : requiresApproval ? (
+            <Uik.Button
+              className="uik-pool-actions__cta swap-route-action-btn"
+              text={isApproving ? 'Approving...' : `Approve ${tokenInDisplaySymbol}`}
+              fill
+              size="large"
+              disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n}
+              onClick={approve}
+            />
+          ) : (
+            <Uik.Button
+              className="uik-pool-actions__cta swap-route-action-btn"
+              text={swapButtonLabel}
+              icon={faArrowsRotate}
+              fill
+              size="large"
+              disabled={!canSwap || isSwapping || isRefreshing}
+              onClick={swap}
+            />
+          )}
         </div>
-        {quoteError ? (
-          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#b24471' }}>{quoteError}</p>
-        ) : null}
-        {!quoteError && quoteNote ? (
-          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#6a5b8b' }}>{quoteNote}</p>
-        ) : null}
-
-        {/* Slippage slider */}
-        <div style={{ marginBottom: 20 }}>
-          <Uik.Slider
-            value={slippageSliderValue}
-            steps={1}
-            helpers={SLIPPAGE_SLIDER_HELPERS}
-            tooltip={`${clampedSlippage.toFixed(1)}%`}
-            onChange={setSlippageFromSlider}
-          />
-        </div>
-
-        {/* Action button */}
-        {isWrongChain ? (
-          <Uik.Button className="swap-action-btn" text={isSwitching ? 'Switching...' : 'Switch To Reef Chain'} fill size="large" disabled={isSwitching} onClick={switchToReef} />
-        ) : requiresApproval ? (
-          <Uik.Button className="swap-action-btn" text={isApproving ? 'Approving...' : `Approve ${tokenInDisplaySymbol}`} fill size="large" disabled={isApproving || hasInsufficientBalance || parsedAmountIn <= 0n} onClick={approve} />
-        ) : (
-          <Uik.Button className="swap-action-btn" text={swapButtonLabel} fill size="large" disabled={!canSwap || isSwapping || isRefreshing} onClick={swap} />
-        )}
-
       </div>
     </div>
   );

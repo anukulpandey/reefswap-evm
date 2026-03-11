@@ -662,6 +662,160 @@ body {
   display: flex;
 }
 
+.swap-route-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background-color: #ece9f4;
+  padding: 96px 16px 24px;
+  overflow-y: auto;
+}
+
+.swap-route-actions {
+  width: min(560px, calc(100vw - 24px));
+  min-width: 0;
+  margin-top: 16px;
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 0 12px 40px rgba(93, 59, 173, 0.18);
+}
+
+.swap-route-actions__tokens {
+  margin-top: 0 !important;
+}
+
+.swap-route-actions .uik-pool-actions-token {
+  border-radius: 16px;
+}
+
+.swap-route-actions .uik-pool-actions-token__token {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.swap-route-actions .uik-pool-actions-token__value {
+  max-width: min(42%, 235px);
+}
+
+.swap-route-token-select {
+  min-width: 0;
+}
+
+.swap-route-token-select-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.swap-route-token-select-btn .uik-pool-actions-token__symbol {
+  margin: 0;
+}
+
+.swap-route-token-select-btn svg {
+  color: #9188a8;
+  flex: 0 0 auto;
+}
+
+.swap-route-token-select-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.swap-route-actions .swap-route-token-input {
+  border: none;
+  background: transparent;
+  padding: 20px 17px;
+  border-radius: 0;
+  color: #a328ab;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1;
+  outline: none;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.swap-route-actions .swap-route-token-input::placeholder {
+  color: hsla(var(--text-light--h), var(--text-light--s), var(--text-light--l), 0.5);
+}
+
+.swap-route-actions .swap-route-token-input:focus {
+  box-shadow: none;
+}
+
+.swap-route-actions .swap-route-token-input--readonly {
+  color: #9f9ab2;
+}
+
+.swap-route-switch-slider-row {
+  margin: 20px 0 22px;
+}
+
+.swap-route-switch-slider-row .uik-pool-actions__token-switch {
+  margin-top: 2px;
+}
+
+.swap-route-switch-slider-row .uik-pool-actions__slider {
+  margin: 0;
+  padding-left: 6px;
+}
+
+.swap-route-actions__slippage-slider {
+  margin: 34px 0 24px !important;
+}
+
+.swap-route-action-btn {
+  border-radius: 16px !important;
+  box-shadow: 0 10px 20px rgb(117 60 176 / 22%);
+  font-size: 1.08rem !important;
+  font-weight: 700 !important;
+}
+
+.swap-route-action-btn.uik-button--fill:not(.uik-button--disabled) {
+  background: linear-gradient(90deg, #b02f8f, #6c3bb7) !important;
+}
+
+.swap-route-action-btn.uik-button--disabled {
+  background: #d2ccdf !important;
+  color: #8f89a3 !important;
+  box-shadow: none;
+}
+
+.swap-route-actions .pool-token-avatar {
+  overflow: hidden;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.swap-route-actions .pool-token-avatar--reef {
+  background: linear-gradient(135deg, #be29c7 0%, #7d27bf 100%) !important;
+}
+
+.swap-route-actions .pool-token-avatar__reef-mark {
+  width: 68%;
+  height: 68%;
+  min-width: 1.45rem;
+  min-height: 1.45rem;
+  color: #fff;
+}
+
+.swap-route-actions .pool-token-avatar__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .swap-modal {
   width: 100%;
   border-radius: 1.7rem;
@@ -972,6 +1126,40 @@ input {
   background: #d2ccdf !important;
   color: #8f89a3 !important;
   box-shadow: none;
+}
+
+@media (max-width: 900px) {
+  .swap-route-overlay {
+    padding-top: 84px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .swap-route-actions {
+    width: 100%;
+    margin-top: 8px;
+    padding: 20px 14px 18px;
+    border-radius: 20px;
+  }
+
+  .swap-route-actions .uik-pool-actions-token__value {
+    max-width: 176px;
+  }
+
+  .swap-route-actions .swap-route-token-input {
+    font-size: 18px;
+    padding-right: 14px;
+    padding-left: 10px;
+  }
+
+  .swap-route-token-select-btn .uik-pool-actions-token__symbol {
+    font-size: 1.45rem;
+  }
+
+  .swap-route-switch-slider-row {
+    gap: 10px;
+    margin: 16px 0 18px;
+  }
 }
 
 .creator {
