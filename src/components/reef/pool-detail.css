@@ -552,6 +552,48 @@
   padding: 7px 11px;
 }
 
+.pool-chart__tools {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 12px;
+}
+
+.pool-chart__tools-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pool-chart__tool-btn {
+  border: 1px solid #cfc7dd;
+  border-radius: 999px;
+  background: #f4f1f9;
+  color: #7f7896;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0.45rem 0.72rem;
+  transition: all 0.16s ease;
+}
+
+.pool-chart__tool-btn:hover {
+  cursor: pointer;
+  border-color: #9f86c8;
+  color: #5d3bad;
+}
+
+.pool-chart__tool-btn.is-active {
+  border-color: #7e56c2;
+  color: #fff;
+  background: linear-gradient(135deg, #a12fbe 0%, #6f3fb7 100%);
+  box-shadow: 0 6px 14px rgba(116, 64, 173, 0.25);
+}
+
 .pool-detail-chart {
   position: relative;
   min-height: 560px;
@@ -804,6 +846,15 @@
     width: 100%;
     max-width: none;
     margin-right: 0;
+  }
+
+  .pool-chart__tools {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pool-chart__tools-actions {
+    justify-content: flex-start;
   }
 }
 

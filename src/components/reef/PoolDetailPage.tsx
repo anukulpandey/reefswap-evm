@@ -5,8 +5,10 @@ import { useAccount, useConnect, usePublicClient, useSwitchChain, useWalletClien
 import { formatUnits, getAddress, isAddress, parseUnits, type Address } from 'viem';
 import {
   AreaSeries,
+  CandlestickSeries,
   HistogramSeries,
   LineStyle,
+  LineSeries,
   LineType,
   createChart,
   type IChartApi,
@@ -23,6 +25,7 @@ import './pool-detail.css';
 
 type ActionTab = 'trade' | 'stake' | 'unstake';
 type ChartTab = 'price' | 'liquidity' | 'volume' | 'fees';
+type ChartStyle = 'candles' | 'area' | 'line';
 type Timeframe = '1h' | '1D' | '1W' | '1M';
 
 type PoolDetailPageProps = {
@@ -292,10 +295,22 @@ const tabLabelByValue: Record<ChartTab, string> = {
 type PoolSeriesChartProps = {
   points: ChartPoint[];
   chartTab: ChartTab;
+  chartStyle: ChartStyle;
   timeframe: Timeframe;
+  showCrosshair: boolean;
+  showGrid: boolean;
+  steppedLine: boolean;
 };
 
-const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps): JSX.Element => {
+const PoolSeriesChart = ({
+  points,
+  chartTab,
+  chartStyle,
+  timeframe,
+  showCrosshair,
+  showGrid,
+  steppedLine,
+}: PoolSeriesChartProps): JSX.Element => {
   const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -311,12 +326,24 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
         fontSize: 14,
       },
       grid: {
-        vertLines: { color: '#cfd0de' },
-        horzLines: { color: '#cfd0de' },
+        vertLines: { color: showGrid ? '#cfd0de' : 'rgba(0, 0, 0, 0)' },
+        horzLines: { color: showGrid ? '#cfd0de' : 'rgba(0, 0, 0, 0)' },
       },
       crosshair: {
-        vertLine: { color: '#a52ec0', labelBackgroundColor: '#a52ec0', style: LineStyle.Dashed, width: 1 },
-        horzLine: { color: '#a52ec0', labelBackgroundColor: '#a52ec0', style: LineStyle.Dashed, width: 1 },
+        vertLine: {
+          visible: showCrosshair,
+          color: '#a52ec0',
+          labelBackgroundColor: '#a52ec0',
+          style: LineStyle.Dashed,
+          width: 1,
+        },
+        horzLine: {
+          visible: showCrosshair,
+          color: '#a52ec0',
+          labelBackgroundColor: '#a52ec0',
+          style: LineStyle.Dashed,
+          width: 1,
+        },
       },
       leftPriceScale: { visible: false },
       rightPriceScale: {
@@ -363,24 +390,78 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
         };
       }));
     } else {
-      const areaSeries = chart.addSeries(AreaSeries, {
-        lineColor: '#ac35c1',
-        lineWidth: 3,
-        lineType: LineType.WithSteps,
-        topColor: 'rgba(172, 53, 193, 0.30)',
-        bottomColor: 'rgba(172, 53, 193, 0.06)',
-        priceFormat: {
-          type: 'custom',
-          formatter: (value: number) => formatAxisValue(chartTab, value),
-          minMove: chartTab === 'price' ? 0.000001 : 0.01,
-        },
-        lastValueVisible: true,
-        priceLineVisible: true,
-        priceLineColor: '#a52ec0',
-        priceLineStyle: LineStyle.Dotted,
-        priceLineWidth: 2,
-      });
-      areaSeries.setData(seriesData);
+      if (chartTab === 'price' && chartStyle === 'candles') {
+        const candleSeries = chart.addSeries(CandlestickSeries, {
+          upColor: '#34b57f',
+          downColor: '#d84a84',
+          wickUpColor: '#34b57f',
+          wickDownColor: '#d84a84',
+          borderVisible: false,
+          priceFormat: {
+            type: 'custom',
+            formatter: (value: number) => formatAxisValue(chartTab, value),
+            minMove: 0.000001,
+          },
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: '#a52ec0',
+          priceLineStyle: LineStyle.Dotted,
+          priceLineWidth: 2,
+        });
+
+        candleSeries.setData(points.map((point, index) => {
+          const previous = points[index - 1];
+          const next = points[index + 1];
+          const open = previous ? previous.value : point.value;
+          const close = point.value;
+          const neighbor = next?.value ?? close;
+          const high = Math.max(open, close, neighbor);
+          const low = Math.min(open, close, neighbor);
+          return {
+            time: point.time as UTCTimestamp,
+            open,
+            high,
+            low,
+            close,
+          };
+        }));
+      } else if (chartStyle === 'line') {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: '#ac35c1',
+          lineWidth: 3,
+          lineType: steppedLine ? LineType.WithSteps : LineType.Simple,
+          priceFormat: {
+            type: 'custom',
+            formatter: (value: number) => formatAxisValue(chartTab, value),
+            minMove: chartTab === 'price' ? 0.000001 : 0.01,
+          },
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: '#a52ec0',
+          priceLineStyle: LineStyle.Dotted,
+          priceLineWidth: 2,
+        });
+        lineSeries.setData(seriesData);
+      } else {
+        const areaSeries = chart.addSeries(AreaSeries, {
+          lineColor: '#ac35c1',
+          lineWidth: 3,
+          lineType: steppedLine ? LineType.WithSteps : LineType.Simple,
+          topColor: 'rgba(172, 53, 193, 0.30)',
+          bottomColor: 'rgba(172, 53, 193, 0.06)',
+          priceFormat: {
+            type: 'custom',
+            formatter: (value: number) => formatAxisValue(chartTab, value),
+            minMove: chartTab === 'price' ? 0.000001 : 0.01,
+          },
+          lastValueVisible: true,
+          priceLineVisible: true,
+          priceLineColor: '#a52ec0',
+          priceLineStyle: LineStyle.Dotted,
+          priceLineWidth: 2,
+        });
+        areaSeries.setData(seriesData);
+      }
     }
 
     chart.timeScale().fitContent();
@@ -396,7 +477,7 @@ const PoolSeriesChart = ({ points, chartTab, timeframe }: PoolSeriesChartProps):
       chart.remove();
       chartRef.current = null;
     };
-  }, [chartTab, timeframe, points]);
+  }, [chartStyle, chartTab, points, showCrosshair, showGrid, steppedLine, timeframe]);
 
   return <div className="pool-detail-chart__canvas" ref={chartContainerRef} />;
 };
@@ -411,7 +492,11 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
 
   const [actionTab, setActionTab] = useState<ActionTab>('trade');
   const [chartTab, setChartTab] = useState<ChartTab>('price');
+  const [chartStyle, setChartStyle] = useState<ChartStyle>('candles');
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
+  const [showCrosshair, setShowCrosshair] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [steppedLine, setSteppedLine] = useState(true);
   const [isTradeReversed, setIsTradeReversed] = useState(false);
   const [amountInText, setAmountInText] = useState('');
   const [amountOutText, setAmountOutText] = useState('');
@@ -1440,6 +1525,43 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
           />
         </div>
 
+        <div className="pool-chart__tools">
+          <Uik.Tabs
+            value={chartStyle}
+            onChange={(value) => setChartStyle(value as ChartStyle)}
+            options={[
+              { value: 'candles', text: 'Candles' },
+              { value: 'area', text: 'Area' },
+              { value: 'line', text: 'Line' },
+            ]}
+            disabled={chartTab !== 'price'}
+          />
+
+          <div className="pool-chart__tools-actions">
+            <button
+              type="button"
+              className={`pool-chart__tool-btn ${showCrosshair ? 'is-active' : ''}`}
+              onClick={() => setShowCrosshair((current) => !current)}
+            >
+              Crosshair
+            </button>
+            <button
+              type="button"
+              className={`pool-chart__tool-btn ${showGrid ? 'is-active' : ''}`}
+              onClick={() => setShowGrid((current) => !current)}
+            >
+              Grid
+            </button>
+            <button
+              type="button"
+              className={`pool-chart__tool-btn ${steppedLine ? 'is-active' : ''}`}
+              onClick={() => setSteppedLine((current) => !current)}
+            >
+              {steppedLine ? 'Stepped' : 'Smooth'}
+            </button>
+          </div>
+        </div>
+
         <div className="pool-detail-chart">
           {!pair ? (
             <div className="pool-detail-chart__status">Select a pool to load chart data.</div>
@@ -1450,7 +1572,15 @@ const PoolDetailPage = ({ pair, wrappedTokenAddress, mode = 'full' }: PoolDetail
           ) : hasChartError ? (
             <div className="pool-detail-chart__status">Could not load chart data from subgraph.</div>
           ) : (
-            <PoolSeriesChart points={chartPoints} chartTab={chartTab} timeframe={timeframe} />
+            <PoolSeriesChart
+              points={chartPoints}
+              chartTab={chartTab}
+              chartStyle={chartStyle}
+              timeframe={timeframe}
+              showCrosshair={showCrosshair}
+              showGrid={showGrid}
+              steppedLine={steppedLine}
+            />
           )}
         </div>
 
